@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Planejamento Familiar</title>
+  <meta name="theme-color" content="#0f766e">
+  <meta name="description" content="Controle as dívidas e receitas da família, com lembretes de vencimento.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar"><h1 id="title">Resumo</h1></header>
+  <main id="view"></main>
+  <button class="fab" id="fab" aria-label="Adicionar">+</button>
+  <nav class="tabs" id="tabs">
+    <button data-tab="resumo"><span>🏠</span>Resumo</button>
+    <button data-tab="dividas"><span>🧾</span>Dívidas</button>
+    <button data-tab="receitas"><span>💰</span>Receitas</button>
+    <button data-tab="relatorio"><span>📊</span>Relatório</button>
+    <button data-tab="mais"><span>⚙️</span>Mais</button>
+  </nav>
+  <dialog class="sheet" id="sheet"><div class="in" id="sheetBody"></div></dialog>
+  <div id="toast" role="status"></div>
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+  <script src="logic.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
