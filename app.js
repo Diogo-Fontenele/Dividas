@@ -20,7 +20,8 @@
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 
   const state = { tab: 'resumo', ym: hoje().slice(0, 7), ano: +hoje().slice(0, 4), filtro: 'todas', dividas: [], rendas: [], cfg: { hora: '09:00' } };
-  let cur = null; // ocorrência aberta no sheet
+  let cur = null; // ocorrência de dívida aberta no sheet
+  let curR = null; // ocorrência de receita aberta no sheet
   let installEvt = null;
 
   // ---------- util de UI ----------
@@ -58,19 +59,41 @@
   function itemOcc(o) {
     const { dia, mes } = diaMes(o.venc);
     const sub = [o.d.tipo, o.d.responsavel, o.label && o.label !== 'Mensal' ? o.label : ''].filter(Boolean).join(' · ');
-    const enc = o.enc.total > 0 ? `<small class="neg-t">+${brl(o.enc.total)} encargos</small>` : '';
+    const enc = o.enc.total > 0 ? `<small class="neg-t">+${brl(o.enc.total)} de juros</small>` : '';
+    const semValor = o.estimado && o.valor <= 0;
+    const valTxt = semValor ? (o.enc.total > 0 ? brl(o.total) : '—') : (o.estimado ? '~' : '') + brl(o.total);
+    const est = o.estimado ? `<small style="color:var(--amber)">${semValor ? 'informe o valor' : 'valor estimado'}</small>` : '';
     return `<button class="item ${o.status}" data-act="occ" data-id="${esc(o.debtId)}" data-key="${esc(o.key)}">
       <div class="day">${dia}<small>${mes}</small></div>
       <div class="main"><b>${esc(o.d.nome)}</b><span>${esc(sub)}</span></div>
-      <div class="val">${brl(o.total)}<small><span class="chip ${o.status}">${CHIP[o.status]}</span></small>${enc}</div></button>`;
+      <div class="val">${valTxt}<small><span class="chip ${o.status}">${CHIP[o.status]}</span></small>${est}${enc}</div></button>`;
   }
   function itemRenda(o) {
     const { dia, mes } = diaMes(o.data);
-    const sub = [o.r.tipo, o.r.responsavel, o.r.recorrente ? 'Mensal' : ''].filter(Boolean).join(' · ');
-    return `<button class="item" data-act="renda" data-id="${esc(o.rendaId)}">
+    const sub = [o.r.tipo, o.r.responsavel, o.r.recorrente ? (o.r.tipoValor === 'variavel' ? 'Mensal variável' : 'Mensal') : ''].filter(Boolean).join(' · ');
+    const semValor = o.estimado && o.valor <= 0;
+    return `<button class="item" data-act="renda" data-id="${esc(o.rendaId)}" data-key="${esc(o.key)}">
       <div class="day" style="background:var(--green-soft);color:var(--green)">${dia}<small>${mes}</small></div>
       <div class="main"><b>${esc(o.r.descricao)}</b><span>${esc(sub)}</span></div>
-      <div class="val pos-t">${brl(o.valor)}</div></button>`;
+      <div class="val pos-t">${semValor ? '—' : (o.estimado ? '~' : '') + brl(o.valor)}${o.estimado ? `<small style="color:var(--amber)">${semValor ? 'informe o valor' : 'valor estimado'}</small>` : ''}</div></button>`;
+  }
+  // Editor de reajustes (mês a partir do qual o valor muda) — usado em dívidas e receitas.
+  function reajRow(r) {
+    return `<div class="reajrow"><input type="month" name="reajMes" value="${esc((r && r.desde) || '')}" aria-label="A partir do mês"><input type="number" name="reajValor" step="0.01" min="0" inputmode="decimal" placeholder="Novo valor (R$)" value="${esc(r && r.valor != null ? r.valor : '')}" aria-label="Novo valor"><button type="button" class="iconbtn" data-act="delReaj" aria-label="Remover">✕</button></div>`;
+  }
+  function reajEditor(lista) {
+    return `<div class="box" id="wrapReaj"><b>Reajustes de valor</b><p class="hint" style="margin:2px 0 8px">Para quando o valor mudar (novo ano, fim de contrato). Informe o mês em que o novo valor começa a valer.</p><div id="reajList">${(lista || []).map(reajRow).join('')}</div><button type="button" class="btn alt" data-act="addReaj" style="margin-top:0">+ Adicionar reajuste</button></div>`;
+  }
+  function lerReajustes(form) {
+    const meses = [...form.querySelectorAll('input[name=reajMes]')], vals = [...form.querySelectorAll('input[name=reajValor]')];
+    const mapa = {}; let erro = false;
+    meses.forEach((m, i) => {
+      const vv = vals[i].value;
+      if (!m.value && vv === '') return;
+      if (!m.value || vv === '') { erro = true; return; }
+      mapa[m.value] = { desde: m.value, valor: num(vv) };
+    });
+    return { erro, lista: Object.values(mapa).sort((a, b) => a.desde.localeCompare(b.desde)) };
   }
 
   // ---------- views ----------
@@ -88,6 +111,7 @@
         return html + `<div class="card empty">Comece cadastrando as <b>dívidas</b> e as <b>receitas</b> da família.<br><br><button class="btn" data-act="novaDivida">+ Cadastrar primeira dívida</button></div>`;
       }
       html += `<div class="saldo ${r.saldo >= 0 ? 'pos' : 'neg'}"><small>Saldo de ${esc(MESES[+state.ym.slice(5, 7) - 1])}</small><b>${brl(r.saldo)}</b><small>${r.saldo >= 0 ? 'Mês no azul 👍' : 'Mês no vermelho — atenção!'}</small></div>`;
+      if (r.estimados) html += `<div class="banner blue">ℹ️ <div>${r.estimados} lançamento(s) deste mês com <b>valor variável ainda não informado</b> (estimado ou zerado). Toque neles para informar o valor real.</div></div>`;
       html += `<div class="grid3"><div class="stat"><small>Receitas</small><b class="pos-t">${brl(r.receitas)}</b></div>
         <div class="stat"><small>Dívidas</small><b class="neg-t">${brl(r.dividas)}</b></div>
         <div class="stat"><small>Já pago</small><b>${brl(r.pago)}</b></div></div>`;
@@ -135,6 +159,7 @@
       const a = L.resumoAno(state.dividas, state.rendas, state.ano, hoje());
       let html = monthNav(String(state.ano), 'ano');
       if (!a.receitas && !a.dividas) return html + `<div class="card empty">Sem dados em ${state.ano}.</div>`;
+      if (a.estimados) html += `<div class="banner blue">ℹ️ <div>Este relatório inclui ${a.estimados} lançamento(s) variável(is) ainda sem valor real — o saldo é uma previsão até você informar cada mês.</div></div>`;
       html += `<div class="saldo ${a.saldo >= 0 ? 'pos' : 'neg'}"><small>Resultado de ${state.ano}</small><b>${brl(a.saldo)}</b><small>${a.mesesPositivos} mês(es) positivo(s) · ${a.mesesNegativos} negativo(s)</small></div>`;
       html += `<div class="grid3"><div class="stat"><small>Receitas</small><b class="pos-t">${brl(a.receitas)}</b></div><div class="stat"><small>Dívidas</small><b class="neg-t">${brl(a.dividas)}</b></div><div class="stat"><small>Saldo</small><b class="${a.saldo >= 0 ? 'pos-t' : 'neg-t'}">${brl(a.saldo)}</b></div></div>`;
       // gráfico
@@ -187,11 +212,12 @@
   // ---------- formulário de dívida ----------
   function formDivida(id) {
     const d = id ? state.dividas.find((x) => x.id === id) : null;
-    const v = d || { tipo: 'Energia elétrica', nome: '', responsavel: '', vencimento: '', valor: '', jurosAtraso: 1, multaAtraso: 2, recorrente: true, recorrenteAte: '', valorParcela: '', jurosMensal: '', qtdParcelas: '', parcelasPagas: 0, pagamentos: {} };
+    const v = d || { tipo: 'Energia elétrica', nome: '', responsavel: '', vencimento: '', valor: '', recorrente: true, tipoValor: 'variavel', recorrenteAte: '', reajustes: [], valorParcela: '', jurosMensal: '', qtdParcelas: '', parcelasPagas: 0, pagamentos: {} };
     const preset = L.TIPOS.some((t) => t.nome === v.tipo);
     const opts = L.TIPOS.map((t) => `<option ${v.tipo === t.nome ? 'selected' : ''}>${esc(t.nome)}</option>`).join('') + `<option value="__custom" ${preset ? '' : 'selected'}>➕ Outro (digitar)</option>`;
     const resp = [...new Set([...state.dividas.map((x) => x.responsavel), ...state.rendas.map((x) => x.responsavel)].filter(Boolean))];
     const dataPg = d && !L.isEmprestimo(d) ? (d.pagamentos || {})[firstKey(d)] || '' : '';
+    const acr = d ? L.acrescimoDe(d) : '';
     openSheet(`<h3>${d ? 'Editar dívida' : 'Nova dívida'}</h3>
       <form id="fDivida" data-id="${esc(id || '')}" autocomplete="off">
         <label class="field"><span>Tipo de dívida</span><select name="tipo">${opts}</select></label>
@@ -201,11 +227,15 @@
         <datalist id="dlResp">${resp.map((r) => `<option value="${esc(r)}">`).join('')}</datalist>
         <label class="field"><span id="lblVenc">Data de vencimento</span><input type="date" name="vencimento" required value="${esc(v.vencimento)}"></label>
         <div id="blocoComum">
-          <label class="field"><span>Valor da dívida (R$)</span><input type="number" name="valor" step="0.01" min="0" inputmode="decimal" value="${esc(L.isEmprestimo(v) ? '' : v.valor)}"></label>
           <label class="check"><input type="checkbox" name="recorrente" ${v.recorrente ? 'checked' : ''}> Conta que se repete todo mês</label>
-          <label class="field" id="wrapAte" hidden><span>Repetir até (opcional)</span><input type="date" name="recorrenteAte" value="${esc(v.recorrenteAte || '')}"></label>
+          <label class="field" id="wrapTipoValor"><span>Como é o valor dessa conta?</span>
+            <select name="tipoValor"><option value="fixo" ${v.tipoValor !== 'variavel' ? 'selected' : ''}>Fixo — o mesmo valor todo mês</option><option value="variavel" ${v.tipoValor === 'variavel' ? 'selected' : ''}>Variável — muda todo mês</option></select></label>
+          <label class="field"><span id="lblValor">Valor da dívida (R$)</span><input type="number" name="valor" step="0.01" min="0" inputmode="decimal" value="${esc(L.isEmprestimo(v) || !v.valor ? '' : v.valor)}"></label>
+          <p class="hint" id="hintValor"></p>
+          <label class="field" id="wrapAte"><span>Fim do contrato / última cobrança (opcional)</span><input type="date" name="recorrenteAte" value="${esc(v.recorrenteAte || '')}"></label>
+          ${reajEditor(v.reajustes)}
           <label class="field"><span>Data do pagamento (se já foi paga)</span><input type="date" name="dataPagamento" value="${esc(dataPg)}" data-orig="${esc(dataPg)}"></label>
-          <p class="hint">Em contas mensais, informe o <b>próximo</b> vencimento. Depois marque cada mês como pago na lista.</p>
+          <p class="hint">Em contas mensais, informe o <b>próximo</b> vencimento. Depois toque em cada mês na lista para pagar (e, se for variável, informar o valor do mês).</p>
         </div>
         <div id="blocoEmp" hidden>
           <label class="field"><span>Valor emprestado / financiado (R$)</span><input type="number" name="valorEmp" step="0.01" min="0" inputmode="decimal" value="${esc(L.isEmprestimo(v) ? v.valor : '')}"></label>
@@ -219,10 +249,8 @@
           </div>
           <div class="box" id="boxRest"></div>
         </div>
-        <div class="row2">
-          <label class="field"><span>Juros por atraso (% ao mês)</span><input type="number" name="jurosAtraso" step="0.01" min="0" inputmode="decimal" value="${esc(v.jurosAtraso)}"></label>
-          <label class="field"><span>Multa por atraso (%)</span><input type="number" name="multaAtraso" step="0.01" min="0" inputmode="decimal" value="${esc(v.multaAtraso)}"></label>
-        </div>
+        <label class="field"><span>Juros se pagar em atraso (R$)</span><input type="number" name="acrescimoAtraso" step="0.01" min="0" inputmode="decimal" value="${esc(acr)}" placeholder="Ex.: 15,00"></label>
+        <p class="hint">Quanto você pagará de juros caso pague depois do vencimento (valor fixo em reais). Deixe vazio se não houver.</p>
         <div class="err" id="err"></div>
         <button class="btn" type="submit">Salvar dívida</button>
       </form>
@@ -234,10 +262,14 @@
     const f = $('#fDivida'); if (!f) return;
     const tipo = f.tipo.value === '__custom' ? f.tipoCustom.value.trim() : f.tipo.value;
     const emp = L.isEmprestimo({ tipo });
+    const rec = !emp && f.recorrente.checked, variavel = rec && f.tipoValor.value === 'variavel';
     $('#wrapCustom').hidden = f.tipo.value !== '__custom';
     $('#blocoComum').hidden = emp; $('#blocoEmp').hidden = !emp;
     $('#lblVenc').textContent = emp ? 'Vencimento da próxima parcela' : 'Data de vencimento';
-    $('#wrapAte').hidden = !f.recorrente.checked;
+    $('#wrapTipoValor').hidden = !rec; $('#wrapAte').hidden = !rec; $('#wrapReaj').hidden = !(rec && !variavel);
+    $('#lblValor').textContent = !rec ? 'Valor da dívida (R$)' : variavel ? 'Valor estimado (R$) — opcional' : 'Valor mensal (R$)';
+    $('#hintValor').textContent = variavel ? 'Serve só como previsão. O valor real você informa mês a mês, tocando na conta na lista.' : '';
+    $('#hintValor').hidden = !variavel;
     if (emp) {
       const total = Math.round(num(f.qtdParcelas.value)), pagas = Math.round(num(f.parcelasPagas.value));
       const rest = Math.max(0, total - pagas);
@@ -251,12 +283,17 @@
     const d = old ? Object.assign({}, old) : { id: uid(), criadoEm: Date.now() };
     d.pagamentos = Object.assign({}, (old && old.pagamentos) || {});
     Object.assign(d, { tipo: tipo || 'Outros', nome: f.nome.value.trim(), responsavel: f.responsavel.value.trim(), vencimento: f.vencimento.value,
-      jurosAtraso: num(f.jurosAtraso.value), multaAtraso: num(f.multaAtraso.value) });
+      acrescimoAtraso: num(f.acrescimoAtraso.value) });
+    delete d.jurosAtraso; delete d.multaAtraso; // substituídos pelo valor fixo em R$
     if (L.isEmprestimo(d)) {
       Object.assign(d, { valor: num(f.valorEmp.value), valorParcela: num(f.valorParcela.value), jurosMensal: num(f.jurosMensal.value),
-        qtdParcelas: Math.round(num(f.qtdParcelas.value)), parcelasPagas: Math.round(num(f.parcelasPagas.value)), recorrente: false, recorrenteAte: '' });
+        qtdParcelas: Math.round(num(f.qtdParcelas.value)), parcelasPagas: Math.round(num(f.parcelasPagas.value)), recorrente: false, recorrenteAte: '', tipoValor: 'fixo', reajustes: [] });
     } else {
-      Object.assign(d, { valor: num(f.valor.value), recorrente: f.recorrente.checked, recorrenteAte: f.recorrente.checked ? f.recorrenteAte.value : '' });
+      const rec = f.recorrente.checked, variavel = rec && f.tipoValor.value === 'variavel';
+      const rj = lerReajustes(f);
+      if (rec && !variavel && rj.erro) { $('#err').textContent = 'Cada reajuste precisa de um mês e de um valor.'; return; }
+      Object.assign(d, { valor: num(f.valor.value), recorrente: rec, tipoValor: rec ? f.tipoValor.value : 'fixo', recorrenteAte: rec ? f.recorrenteAte.value : '',
+        reajustes: rec && !variavel ? rj.lista : (d.reajustes || []) });
       const novo = f.dataPagamento.value;
       if (novo !== (f.dataPagamento.dataset.orig || '') && d.vencimento) {
         if (novo) d.pagamentos[firstKey(d)] = novo; else delete d.pagamentos[firstKey(d)];
@@ -274,38 +311,54 @@
   // ---------- formulário de receita ----------
   function formRenda(id) {
     const r = id ? state.rendas.find((x) => x.id === id) : null;
-    const v = r || { descricao: '', tipo: 'Salário', responsavel: '', valor: '', data: '', recorrente: true, recorrenteAte: '' };
+    const v = r || { descricao: '', tipo: 'Salário', responsavel: '', valor: '', data: '', recorrente: true, tipoValor: 'fixo', recorrenteAte: '', reajustes: [] };
     const resp = [...new Set([...state.dividas.map((x) => x.responsavel), ...state.rendas.map((x) => x.responsavel)].filter(Boolean))];
     openSheet(`<h3>${r ? 'Editar receita' : 'Nova receita'}</h3>
       <form id="fRenda" data-id="${esc(id || '')}" autocomplete="off">
-        <label class="field"><span>Descrição</span><input name="descricao" required value="${esc(v.descricao)}" placeholder="Ex.: Salário do Diogo"></label>
+        <label class="field"><span>Descrição</span><input name="descricao" required value="${esc(v.descricao)}" placeholder="Ex.: Aluguel do apartamento"></label>
         <label class="field"><span>Tipo</span><select name="tipo">${L.TIPOS_RENDA.map((t) => `<option ${v.tipo === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
         <label class="field"><span>Quem recebe</span><input name="responsavel" list="dlResp2" value="${esc(v.responsavel)}"></label>
         <datalist id="dlResp2">${resp.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
+        <label class="check"><input type="checkbox" name="recorrente" ${v.recorrente ? 'checked' : ''}> Recebo todo mês</label>
+        <label class="field" id="wrapTipoValorR"><span>Como é o valor?</span>
+          <select name="tipoValor"><option value="fixo" ${v.tipoValor !== 'variavel' ? 'selected' : ''}>Fixo — o mesmo valor todo mês</option><option value="variavel" ${v.tipoValor === 'variavel' ? 'selected' : ''}>Variável — muda todo mês</option></select></label>
         <div class="row2">
-          <label class="field"><span>Valor (R$)</span><input type="number" name="valor" step="0.01" min="0" inputmode="decimal" required value="${esc(v.valor)}"></label>
+          <label class="field"><span id="lblValorR">Valor (R$)</span><input type="number" name="valor" step="0.01" min="0" inputmode="decimal" value="${esc(v.valor || '')}"></label>
           <label class="field"><span>Data de recebimento</span><input type="date" name="data" required value="${esc(v.data)}"></label>
         </div>
-        <label class="check"><input type="checkbox" name="recorrente" ${v.recorrente ? 'checked' : ''}> Recebo todo mês</label>
-        <label class="field" id="wrapAteR" ${v.recorrente ? '' : 'hidden'}><span>Repetir até (opcional)</span><input type="date" name="recorrenteAte" value="${esc(v.recorrenteAte || '')}"></label>
+        <label class="field" id="wrapAteR"><span>Fim do contrato (opcional)</span><input type="date" name="recorrenteAte" value="${esc(v.recorrenteAte || '')}"></label>
+        ${reajEditor(v.reajustes)}
         <div class="err" id="err"></div>
         <button class="btn" type="submit">Salvar receita</button>
       </form>
       <div class="btns" style="margin-top:8px">${r ? `<button class="btn danger" data-act="delRenda" data-id="${esc(r.id)}">Excluir receita</button>` : ''}<button class="btn alt" data-act="fechar">Cancelar</button></div>`);
+    syncRenda();
+  }
+
+  function syncRenda() {
+    const f = $('#fRenda'); if (!f) return;
+    const rec = f.recorrente.checked, variavel = rec && f.tipoValor.value === 'variavel';
+    $('#wrapTipoValorR').hidden = !rec; $('#wrapAteR').hidden = !rec; $('#wrapReaj').hidden = !(rec && !variavel);
+    $('#lblValorR').textContent = !rec ? 'Valor (R$)' : variavel ? 'Valor estimado (R$)' : 'Valor mensal (R$)';
   }
 
   async function salvarRenda(f) {
     const id = f.dataset.id, old = id ? state.rendas.find((x) => x.id === id) : null;
+    const rec = f.recorrente.checked, variavel = rec && f.tipoValor.value === 'variavel';
+    const rj = lerReajustes(f);
+    if (rec && !variavel && rj.erro) { $('#err').textContent = 'Cada reajuste precisa de um mês e de um valor.'; return; }
     const r = Object.assign(old ? {} : { id: uid(), criadoEm: Date.now() }, old || {}, {
       descricao: f.descricao.value.trim(), tipo: f.tipo.value, responsavel: f.responsavel.value.trim(), valor: num(f.valor.value),
-      data: f.data.value, recorrente: f.recorrente.checked, recorrenteAte: f.recorrente.checked ? f.recorrenteAte.value : '' });
-    if (!r.descricao || !(r.valor > 0) || !r.data) { $('#err').textContent = 'Preencha descrição, valor e data.'; return; }
+      data: f.data.value, recorrente: rec, tipoValor: rec ? f.tipoValor.value : 'fixo', recorrenteAte: rec ? f.recorrenteAte.value : '',
+      reajustes: rec && !variavel ? rj.lista : ((old && old.reajustes) || []) });
+    if (!r.descricao || !r.data || (!variavel && !(r.valor > 0))) { $('#err').textContent = variavel ? 'Preencha descrição e data.' : 'Preencha descrição, valor e data.'; return; }
+    if (rec && r.recorrenteAte && r.recorrenteAte < r.data) { $('#err').textContent = 'O fim do contrato deve ser depois da data de recebimento.'; return; }
     await DB.put('rendas', r);
     pedirPersistencia();
     await reload(); closeSheet(); render(); toast('Receita salva ✔');
   }
 
-  // ---------- ocorrência (pagar / desfazer) ----------
+  // ---------- ocorrência (valor do mês / pagar / desfazer) ----------
   function findOcc(id, key) {
     const d = state.dividas.find((x) => x.id === id); if (!d) return null;
     const ate = /^\d{4}-\d{2}$/.test(key) ? key + '-31' : '9999-12-31';
@@ -317,22 +370,67 @@
     const f = findOcc(id, key); if (!f) return;
     cur = { id, key };
     const { d, o } = f;
-    const info = `<div class="box"><b>${esc(d.tipo)}</b>${d.responsavel ? ' · ' + esc(d.responsavel) : ''}${o.label && o.label !== 'Mensal' ? ' · ' + esc(o.label) : ''}<br>Vencimento: <b>${fmtData(o.venc)}</b> · Valor: <b>${brl(o.valor)}</b></div>`;
-    let body;
-    if (o.pagoEm) {
-      body = `${info}<div class="box" style="background:var(--green-soft);color:var(--green)">✅ Pago em <b>${fmtData(o.pagoEm)}</b>${o.pagoComAtraso ? `<br>Com ${o.enc.dias} dia(s) de atraso: multa ${brl(o.enc.multa)} + juros ${brl(o.enc.juros)} = <b>${brl(o.total)}</b>` : ''}</div>
-        <div class="btns"><button class="btn alt" data-act="desfazer">Desfazer pagamento</button>`;
-    } else {
-      body = `${info}<label class="field"><span>Data do pagamento</span><input type="date" id="payDate" value="${hoje()}"></label><div class="box" id="boxEnc"></div>
-        <div class="btns"><button class="btn" data-act="pagar">✔ Marcar como pago</button><button class="btn alt" data-act="calOcc">📅 Adicionar ao calendário</button>`;
+    const rec = !!d.recorrente && !L.isEmprestimo(d), variavel = rec && d.tipoValor === 'variavel';
+    const sub = o.estimado ? (o.valor > 0 ? `Estimado: <b>${brl(o.valor)}</b>` : 'Valor: <b>ainda não informado</b>') : `Valor: <b>${brl(o.valor)}</b>`;
+    const info = `<div class="box"><b>${esc(d.tipo)}</b>${d.responsavel ? ' · ' + esc(d.responsavel) : ''}${o.label && o.label !== 'Mensal' ? ' · ' + esc(o.label) : ''}<br>Vencimento: <b>${fmtData(o.venc)}</b> · ${sub}${o.origem === 'reajuste' ? ' <small>(valor reajustado)</small>' : ''}</div>`;
+    let valorSec = '';
+    if (rec) {
+      const prefill = o.estimado && o.valor <= 0 ? '' : o.valor;
+      valorSec = `<details class="box" ${variavel ? 'open' : ''}><summary>${variavel ? '💲 Valor desta conta neste mês' : '💲 Alterar valor / reajuste'}</summary>
+        <label class="field" style="margin-top:10px"><span>Valor em ${esc(labelYM(key))} (R$)</span><input type="number" id="valorOcc" step="0.01" min="0" inputmode="decimal" value="${esc(prefill)}" placeholder="Informe o valor"></label>
+        ${variavel ? '' : `<label class="field"><span>Esse valor vale…</span><select id="escopoOcc"><option value="mes">só neste mês</option><option value="desde">neste mês e nos próximos (reajuste)</option></select></label>`}
+        <button class="btn alt" data-act="salvarValor" style="margin-top:0">Salvar valor</button></details>`;
     }
-    openSheet(`<h3>${esc(d.nome)}</h3>${body}<button class="btn alt" data-act="editDivida" data-id="${esc(d.id)}">✏️ Editar dívida</button><button class="btn alt" data-act="fechar">Fechar</button></div>`);
+    let corpo, botoes;
+    if (o.pagoEm) {
+      corpo = `${info}${valorSec}<div class="box" style="background:var(--green-soft);color:var(--green)">✅ Pago em <b>${fmtData(o.pagoEm)}</b>${o.pagoComAtraso ? `<br>Com ${o.enc.dias} dia(s) de atraso: juros de ${brl(o.enc.juros)} · total <b>${brl(o.total)}</b>` : ''}</div>`;
+      botoes = `<button class="btn alt" data-act="desfazer">Desfazer pagamento</button>`;
+    } else {
+      corpo = `${info}${valorSec}<label class="field"><span>Data do pagamento</span><input type="date" id="payDate" value="${hoje()}"></label><div class="box" id="boxEnc"></div>`;
+      botoes = `<button class="btn" data-act="pagar">✔ Marcar como pago</button><button class="btn alt" data-act="calOcc">📅 Adicionar ao calendário</button>`;
+    }
+    openSheet(`<h3>${esc(d.nome)}</h3>${corpo}<div class="btns">${botoes}<button class="btn alt" data-act="editDivida" data-id="${esc(d.id)}">✏️ Editar dívida</button><button class="btn alt" data-act="fechar">Fechar</button></div>`);
     if (!o.pagoEm) atualizarEnc();
   }
+
+  function valorOccAtual(f) { const inp = $('#valorOcc'); return inp && inp.value !== '' ? num(inp.value) : f.o.valor; }
+
   function atualizarEnc() {
     const f = cur && findOcc(cur.id, cur.key); const inp = $('#payDate'); if (!f || !inp || !inp.value) return;
-    const e = L.encargos(f.o.valor, f.o.venc, inp.value, f.d.jurosAtraso, f.d.multaAtraso);
-    $('#boxEnc').innerHTML = e.dias ? `⚠️ <b>${e.dias} dia(s) de atraso</b>: multa ${brl(e.multa)} + juros ${brl(e.juros)}<br>Total a pagar: <b>${brl(f.o.valor + e.total)}</b>` : `Pagamento em dia ✔ — total <b>${brl(f.o.valor)}</b>`;
+    const e = L.encargos(f.o.venc, inp.value, L.acrescimoDe(f.d));
+    const val = valorOccAtual(f);
+    const faltaValor = f.o.estimado && $('#valorOcc') && $('#valorOcc').value === '';
+    const atraso = e.dias ? `⚠️ <b>${e.dias} dia(s) de atraso</b>: juros de ${brl(e.juros)}` : '';
+    $('#boxEnc').innerHTML = faltaValor ? `${atraso ? atraso + '<br>' : ''}Informe o valor da conta acima para ver o total.`
+      : e.dias ? `${atraso}<br>Total a pagar: <b>${brl(val + e.total)}</b>` : `Pagamento em dia ✔ — total <b>${brl(val)}</b>`;
+  }
+
+  // Aplica o valor digitado em "Valor deste mês": só neste mês, ou como reajuste daqui em diante.
+  function aplicarValorOcc(f) {
+    const inp = $('#valorOcc');
+    if (!inp || inp.value === '') return { d: f.d, mudou: false };
+    const nv = num(inp.value);
+    if (!f.o.estimado && Math.abs(nv - f.o.valor) < 0.005) return { d: f.d, mudou: false };
+    const escopo = $('#escopoOcc') ? $('#escopoOcc').value : 'mes';
+    const d = escopo === 'desde' ? L.aplicarReajuste(f.d, cur.key, nv) : L.definirValorMes(f.d, cur.key, nv);
+    return { d, mudou: true, desde: escopo === 'desde' };
+  }
+  async function salvarValor() {
+    const f = findOcc(cur.id, cur.key); if (!f) return;
+    if ($('#valorOcc').value === '') { toast('Informe o valor.'); return; }
+    const r = aplicarValorOcc(f);
+    if (r.mudou) { await DB.put('dividas', r.d); await reload(); }
+    closeSheet(); render();
+    toast(!r.mudou ? 'Valor mantido' : r.desde ? 'Reajuste salvo: novo valor a partir de ' + labelYM(cur.key) : 'Valor salvo ✔');
+  }
+  async function pagar() {
+    const dt = $('#payDate').value; if (!dt) { toast('Informe a data do pagamento.'); return; }
+    const f = findOcc(cur.id, cur.key); if (!f) return;
+    if ($('#valorOcc') && f.o.estimado && $('#valorOcc').value === '') { toast('Informe o valor desta conta antes de pagar.'); return; }
+    const r = aplicarValorOcc(f);
+    const d = Object.assign({}, r.d, { pagamentos: Object.assign({}, r.d.pagamentos, { [cur.key]: dt }) });
+    await DB.put('dividas', d); await reload(); closeSheet(); render();
+    toast('Pagamento registrado ✔');
   }
   async function setPagamento(data) {
     const f = findOcc(cur.id, cur.key); if (!f) return;
@@ -340,6 +438,33 @@
     if (data) d.pagamentos[cur.key] = data; else delete d.pagamentos[cur.key];
     await DB.put('dividas', d); await reload(); closeSheet(); render();
     toast(data ? 'Pagamento registrado ✔' : 'Pagamento desfeito');
+  }
+
+  // ---------- receita recorrente: valor do mês / reajuste ----------
+  function findOccRenda(id, key) {
+    const r = state.rendas.find((x) => x.id === id); if (!r) return null;
+    const ate = /^\d{4}-\d{2}$/.test(key) ? key + '-31' : '9999-12-31';
+    const o = L.occsRendas([r], ate).find((x) => x.key === key);
+    return o ? { r, o } : null;
+  }
+  function sheetRenda(id, key) {
+    const f = findOccRenda(id, key); if (!f) return;
+    curR = { id, key };
+    const { r, o } = f, variavel = r.tipoValor === 'variavel';
+    const sub = o.estimado ? (o.valor > 0 ? `Estimado: <b>${brl(o.valor)}</b>` : 'Valor: <b>ainda não informado</b>') : `Valor: <b>${brl(o.valor)}</b>`;
+    openSheet(`<h3>${esc(r.descricao)}</h3>
+      <div class="box"><b>${esc(r.tipo)}</b>${r.responsavel ? ' · ' + esc(r.responsavel) : ''}<br>Recebimento: <b>${fmtData(o.data)}</b> · ${sub}${o.origem === 'reajuste' ? ' <small>(valor reajustado)</small>' : ''}</div>
+      <label class="field"><span>Valor em ${esc(labelYM(key))} (R$)</span><input type="number" id="valorRenda" step="0.01" min="0" inputmode="decimal" value="${esc(o.estimado && o.valor <= 0 ? '' : o.valor)}" placeholder="Informe o valor"></label>
+      ${variavel ? '' : `<label class="field"><span>Esse valor vale…</span><select id="escopoRenda"><option value="mes">só neste mês</option><option value="desde">neste mês e nos próximos (reajuste)</option></select></label>`}
+      <div class="btns"><button class="btn" data-act="salvarValorRenda">Salvar valor</button><button class="btn alt" data-act="editRenda" data-id="${esc(r.id)}">✏️ Editar receita</button><button class="btn alt" data-act="fechar">Fechar</button></div>`);
+  }
+  async function salvarValorRenda() {
+    const f = findOccRenda(curR.id, curR.key); if (!f) return;
+    const inp = $('#valorRenda'); if (!inp || inp.value === '') { toast('Informe o valor.'); return; }
+    const escopo = $('#escopoRenda') ? $('#escopoRenda').value : 'mes';
+    const r2 = escopo === 'desde' ? L.aplicarReajuste(f.r, curR.key, num(inp.value)) : L.definirValorMes(f.r, curR.key, num(inp.value));
+    await DB.put('rendas', r2); await reload(); closeSheet(); render();
+    toast(escopo === 'desde' ? 'Reajuste salvo: novo valor a partir de ' + labelYM(curR.key) : 'Valor salvo ✔');
   }
 
   // ---------- calendário ----------
@@ -415,12 +540,20 @@
     ano: (t) => { state.ano += +t.dataset.n; render(); },
     filtro: (t) => { state.filtro = t.dataset.v; render(); },
     occ: (t) => sheetOcc(t.dataset.id, t.dataset.key),
-    renda: (t) => formRenda(t.dataset.id),
+    renda: (t) => { const r = state.rendas.find((x) => x.id === t.dataset.id); if (r && r.recorrente) sheetRenda(r.id, t.dataset.key); else formRenda(t.dataset.id); },
+    editRenda: (t) => formRenda(t.dataset.id),
+    salvarValor, salvarValorRenda,
+    addReaj: (t) => {
+      const f = t.closest('form'), ref = (f.vencimento && f.vencimento.value) || (f.data && f.data.value) || hoje();
+      const l = $('#reajList'); l.insertAdjacentHTML('beforeend', reajRow({ desde: L.addMonths(ref, 12).slice(0, 7) }));
+      l.lastElementChild.querySelector('input[name=reajValor]').focus();
+    },
+    delReaj: (t) => t.closest('.reajrow').remove(),
     novaDivida: () => formDivida(),
     novaRenda: () => formRenda(),
     editDivida: (t) => formDivida(t.dataset.id),
     fechar: closeSheet,
-    pagar: () => { const v = $('#payDate').value; if (!v) { toast('Informe a data do pagamento.'); return; } setPagamento(v); },
+    pagar,
     desfazer: () => setPagamento(null),
     calOcc: () => { const f = cur && findOcc(cur.id, cur.key); if (f) salvarCalendario([Object.assign({}, f.d, { pagamentos: Object.assign({}, f.d.pagamentos) })], 'vencimento-' + f.d.nome.replace(/\W+/g, '-').toLowerCase()); },
     calTodos: () => salvarCalendario(state.dividas, 'vencimentos-familia'),
@@ -454,19 +587,19 @@
   sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
 
   $('#sheetBody').addEventListener('input', (e) => {
-    if (e.target.id === 'payDate') return atualizarEnc();
+    if (e.target.id === 'payDate' || e.target.id === 'valorOcc') return atualizarEnc();
     if (e.target.form && e.target.form.id === 'fDivida') syncForm();
-    if (e.target.form && e.target.form.id === 'fRenda' && e.target.name === 'recorrente') $('#wrapAteR').hidden = !e.target.checked;
+    if (e.target.form && e.target.form.id === 'fRenda') syncRenda();
   });
   $('#sheetBody').addEventListener('change', (e) => {
     const f = e.target.form;
     if (f && f.id === 'fDivida' && e.target.name === 'tipo') {
       const t = L.TIPOS.find((x) => x.nome === e.target.value);
-      if (t) { f.recorrente.checked = t.recorrente; if (!f.nome.value.trim()) f.nome.value = t.nome; }
+      if (t) { f.recorrente.checked = t.recorrente; f.tipoValor.value = t.variavel ? 'variavel' : 'fixo'; if (!f.nome.value.trim()) f.nome.value = t.nome; }
       else f.recorrente.checked = false;
       syncForm();
     }
-    if (f && f.id === 'fRenda' && e.target.name === 'recorrente') $('#wrapAteR').hidden = !e.target.checked;
+    if (f && f.id === 'fRenda') syncRenda();
   });
   $('#sheetBody').addEventListener('submit', (e) => {
     e.preventDefault();

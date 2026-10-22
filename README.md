@@ -31,8 +31,11 @@ Apps web não conseguem agendar alarmes exatos sozinhos no Android — por isso 
 
 ## Regras de cálculo
 
-- **Atraso**: multa (%) única + juros (% ao mês, proporcional por dia). Padrões: multa 2% e juros 1% a.m. (editáveis em cada dívida).
-- **Conta mensal**: marque “se repete todo mês”; cada mês é pago separadamente.
+- **Conta que se repete**: escolha se o valor é **fixo** (mesmo valor todo mês, ex.: aluguel, internet) ou **variável** (muda todo mês, ex.: luz, água, cartão).
+  - *Fixo*: informe o valor mensal, o fim do contrato (opcional) e os **reajustes** (mês em que o novo valor passa a valer). Também dá para reajustar depois: toque na conta no mês desejado → **Alterar valor / reajuste** → “neste mês e nos próximos”.
+  - *Variável*: o valor informado no cadastro é só uma estimativa. Todo mês, toque na conta e informe o valor real antes de pagar.
+- **Receitas** seguem a mesma lógica (ex.: aluguel recebido fixo que muda de valor em certo mês).
+- **Juros por atraso**: valor fixo em R$ cadastrado em cada dívida. Se pagar depois do vencimento, esse valor é somado ao total.
 - **Empréstimo/Financiamento**: informe valor, parcela, juros mensal, nº de parcelas e quantas já foram pagas; o app mostra restantes e valor a pagar.
 
 ## Backup

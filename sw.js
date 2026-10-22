@@ -1,7 +1,7 @@
 /* Service Worker: funciona offline e avisa vencimentos (quando o Android permitir). */
 importScripts('logic.js');
 
-const CACHE = 'pf-v1';
+const CACHE = 'pf-v2';
 const ASSETS = ['./', 'index.html', 'style.css', 'logic.js', 'db.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 
