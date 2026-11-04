@@ -19,7 +19,7 @@
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 
-  const state = { tab: 'resumo', ym: hoje().slice(0, 7), ano: +hoje().slice(0, 4), filtro: 'todas', dividas: [], rendas: [], cfg: { hora: '09:00' } };
+  const state = { tab: 'resumo', ym: hoje().slice(0, 7), ano: +hoje().slice(0, 4), filtro: 'todas', visaoG: 'compras', dividas: [], rendas: [], compras: [], cfg: { hora: '09:00' } };
   let cur = null; // ocorrência de dívida aberta no sheet
   let curR = null; // ocorrência de receita aberta no sheet
   let installEvt = null;
@@ -48,6 +48,7 @@
   async function reload() {
     state.dividas = await DB.all('dividas');
     state.rendas = await DB.all('rendas');
+    state.compras = await DB.all('compras');
     state.cfg = Object.assign({ hora: '09:00' }, await DB.getConfig());
   }
   async function pedirPersistencia() { try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { /* ignore */ } }
@@ -96,30 +97,80 @@
     return { erro, lista: Object.values(mapa).sort((a, b) => a.desde.localeCompare(b.desde)) };
   }
 
+  const svg = (inner, sz) => `<svg width="${sz || 20}" height="${sz || 20}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+  const ICO = {
+    credito: svg('<rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19M6 15h4"/>'),
+    debito: svg('<path d="M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4z"/><path d="M4 7V6a2 2 0 0 1 2-2h10"/><path d="M16 14h2"/>'),
+    pix: svg('<path d="M12 3l5 5-5 5-5-5z"/><path d="M12 11l5 5-5 5-5-5z"/>'),
+  };
+  function itemCompra(c) {
+    const { dia, mes } = diaMes(c.data);
+    const calc = c.forma === 'credito' ? L.calcParcelamento(c.valor, c.parcelas, c.valorParcela) : null;
+    const parc = calc ? (calc.n > 1 ? `${calc.n}x de ${brl(calc.parcela)}` : 'À vista') : '';
+    const sub = [L.FORMAS[c.forma], parc, c.descricao].filter(Boolean).join(' · ');
+    const juros = calc && calc.juros > 0 ? `<small class="neg-t">+${brl(calc.juros)} de juros</small>` : '';
+    return `<button class="item" data-act="compra" data-id="${esc(c.id)}"><div class="day">${dia}<small>${mes}</small></div>
+      <div class="main"><b>${esc(c.tipo)}</b><span>${esc(sub)}</span></div><div class="val">${brl(c.valor)}${juros}</div></button>`;
+  }
+  function itemFatura(i) {
+    const { dia, mes } = diaMes(i.venc);
+    const sub = [i.de > 1 ? `Parcela ${i.n}/${i.de}` : 'À vista', 'compra em ' + fmtData(i.c.data), i.c.descricao].filter(Boolean).join(' · ');
+    return `<button class="item" data-act="compra" data-id="${esc(i.compraId)}"><div class="day">${dia}<small>${mes}</small></div>
+      <div class="main"><b>${esc(i.c.tipo)}</b><span>${esc(sub)}</span></div><div class="val">${brl(i.valor)}</div></button>`;
+  }
+
   // ---------- views ----------
   const views = {
     resumo() {
       const h = hoje();
-      const r = L.resumoMes(state.dividas, state.rendas, state.ym, h);
+      const r = L.resumoMes(state.dividas, state.rendas, state.ym, h, state.compras, state.cfg);
       const atras = L.atrasadas(state.dividas, h), hojeL = L.vencendoHoje(state.dividas, h);
       const prox = L.proximos(state.dividas, h, 30).filter((o) => o.venc > h).slice(0, 6);
+      const hojeC = state.compras.filter((c) => c.data === h);
+      const totHoje = L.round2(hojeC.reduce((s2, c) => s2 + (Number(c.valor) || 0), 0));
       let html = '';
       if (hojeL.length) html += `<div class="banner amber">⏰ <div><b>Vence hoje:</b> ${hojeL.map((o) => esc(o.d.nome) + ' (' + brl(o.total) + ')').join(', ')}</div></div>`;
-      if (atras.length) html += `<div class="banner red">⚠️ <div><b>${atras.length} em atraso</b> · ${brl(atras.reduce((s, o) => s + o.total, 0))} com juros e multa. Veja na aba Dívidas.</div></div>`;
+      if (atras.length) html += `<div class="banner red">⚠️ <div><b>${atras.length} em atraso</b> · ${brl(atras.reduce((s2, o) => s2 + o.total, 0))} com juros. Veja na aba Dívidas.</div></div>`;
       html += monthNav(labelYM(state.ym), 'mes');
-      if (!state.dividas.length && !state.rendas.length) {
-        return html + `<div class="card empty">Comece cadastrando as <b>dívidas</b> e as <b>receitas</b> da família.<br><br><button class="btn" data-act="novaDivida">+ Cadastrar primeira dívida</button></div>`;
+      if (!state.dividas.length && !state.rendas.length && !state.compras.length) {
+        return html + `<div class="card empty">Comece lançando seus <b>gastos</b>, <b>dívidas</b> e <b>receitas</b>.<br><br><div class="btns"><button class="btn" data-act="novoGasto">Lançar um gasto</button><button class="btn alt" data-act="novaDivida">Cadastrar uma dívida</button></div></div>`;
       }
-      html += `<div class="saldo ${r.saldo >= 0 ? 'pos' : 'neg'}"><small>Saldo de ${esc(MESES[+state.ym.slice(5, 7) - 1])}</small><b>${brl(r.saldo)}</b><small>${r.saldo >= 0 ? 'Mês no azul 👍' : 'Mês no vermelho — atenção!'}</small></div>`;
+      html += `<div class="saldo ${r.saldo >= 0 ? 'pos' : 'neg'}"><small>Saldo de ${esc(MESES[+state.ym.slice(5, 7) - 1])}</small><b>${brl(r.saldo)}</b><small>${r.saldo >= 0 ? '● Mês no azul' : '● Mês no vermelho, atenção'} · receitas − contas − gastos</small></div>`;
       if (r.estimados) html += `<div class="banner blue">ℹ️ <div>${r.estimados} lançamento(s) deste mês com <b>valor variável ainda não informado</b> (estimado ou zerado). Toque neles para informar o valor real.</div></div>`;
       html += `<div class="grid3"><div class="stat"><small>Receitas</small><b class="pos-t">${brl(r.receitas)}</b></div>
-        <div class="stat"><small>Dívidas</small><b class="neg-t">${brl(r.dividas)}</b></div>
-        <div class="stat"><small>Já pago</small><b>${brl(r.pago)}</b></div></div>`;
+        <div class="stat"><small>Contas</small><b class="neg-t">${brl(r.dividas)}</b></div>
+        <div class="stat"><small>Gastos</small><b class="violet-t">${brl(r.gastos)}</b></div></div>
+        <p class="hint" style="margin:-4px 2px 12px">Gastos = débito, Pix e as parcelas do cartão que vencem neste mês.</p>`;
+      html += `<div class="card quick"><div><h2>Gastos de hoje</h2><b>${brl(totHoje)}</b><span class="sub">${hojeC.length ? hojeC.length + ' compra(s) lançada(s)' : 'Nenhuma compra lançada hoje'}</span></div><button class="btn mini" data-act="novoGasto">+ Lançar gasto</button></div>`;
       const pct = r.qtd ? Math.round((r.qtdPagas / r.qtd) * 100) : 0;
       html += `<div class="card"><h2>Contas pagas no mês</h2><b>${r.qtdPagas} de ${r.qtd}</b> · falta pagar ${brl(r.aberto + r.atrasado)}<div class="progress"><i style="width:${pct}%"></i></div></div>`;
-      html += `<h2 style="font-size:15px;color:var(--muted);margin:16px 0 8px">Próximos vencimentos (30 dias)</h2>`;
+      html += `<h2 style="font-size:13px;color:var(--muted);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.04em">Próximos vencimentos (30 dias)</h2>`;
       html += prox.length ? `<div class="list">${prox.map(itemOcc).join('')}</div>` : `<div class="card empty">Nada a vencer nos próximos 30 dias 🎉</div>`;
       return html;
+    },
+
+    gastos() {
+      const ym = state.ym, mesNome = MESES[+ym.slice(5, 7) - 1];
+      let html = monthNav(labelYM(ym), 'mes');
+      html += `<div class="segment">${[['compras', 'Compras'], ['fatura', 'Fatura do cartão']].map(([k, t]) => `<button class="${state.visaoG === k ? 'on' : ''}" data-act="visaoG" data-v="${k}">${t}</button>`).join('')}</div>`;
+      if (state.visaoG === 'fatura') {
+        const itens = L.itensGastos(state.compras, state.cfg).filter((i) => i.forma === 'credito' && i.venc.startsWith(ym));
+        const tot = L.round2(itens.reduce((s2, i) => s2 + i.valor, 0));
+        html += `<div class="card"><h2>Fatura de ${esc(mesNome)}</h2><b class="big">${brl(tot)}</b><span class="sub">${itens.length} parcela(s) vencem neste mês${state.cfg.cartaoVenc ? '' : ' · configure o fechamento em Mais'}</span></div>`;
+        return html + (itens.length ? `<div class="list">${itens.map(itemFatura).join('')}</div>` : `<div class="card empty">Nenhuma parcela de cartão neste mês.</div>`);
+      }
+      const cs = state.compras.filter((c) => (c.data || '').startsWith(ym)).sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || 0) - (a.criadoEm || 0));
+      const tot = L.round2(cs.reduce((s2, c) => s2 + (Number(c.valor) || 0), 0));
+      const porForma = { credito: 0, debito: 0, pix: 0 };
+      cs.forEach((c) => { porForma[c.forma] = L.round2((porForma[c.forma] || 0) + (Number(c.valor) || 0)); });
+      const juros = L.round2(cs.reduce((s2, c) => s2 + L.jurosCompra(c), 0));
+      html += `<div class="card"><h2>Gastos de ${esc(mesNome)}</h2><b class="big">${brl(tot)}</b><span class="sub">${cs.length} compra(s) lançada(s)${juros > 0 ? ' · ' + brl(juros) + ' de juros em parcelamentos' : ''}</span>
+        <div class="pillrow">${['credito', 'debito', 'pix'].map((k) => `<span class="pill">${ICO[k]}${L.FORMAS[k]} <b>${brl(porForma[k])}</b></span>`).join('')}</div></div>`;
+      const porTipo = {};
+      cs.forEach((c) => { porTipo[c.tipo] = L.round2((porTipo[c.tipo] || 0) + (Number(c.valor) || 0)); });
+      const cats = Object.entries(porTipo).sort((x, y) => y[1] - x[1]).slice(0, 5);
+      if (cats.length) html += `<div class="card"><h2>Onde mais gastei</h2>${cats.map(([t, v]) => `<div class="cat"><div class="row"><span>${esc(t)}</span><b>${brl(v)}</b></div><div class="bar"><i style="width:${tot ? Math.max(3, Math.round((v / tot) * 100)) : 0}%"></i></div></div>`).join('')}</div>`;
+      return html + (cs.length ? `<div class="list">${cs.map(itemCompra).join('')}</div>` : `<div class="card empty">Nenhum gasto neste mês.<br><br><button class="btn" data-act="novoGasto">+ Lançar gasto</button></div>`);
     },
 
     dividas() {
@@ -156,29 +207,33 @@
     },
 
     relatorio() {
-      const a = L.resumoAno(state.dividas, state.rendas, state.ano, hoje());
+      const a = L.resumoAno(state.dividas, state.rendas, state.ano, hoje(), state.compras, state.cfg);
       let html = monthNav(String(state.ano), 'ano');
-      if (!a.receitas && !a.dividas) return html + `<div class="card empty">Sem dados em ${state.ano}.</div>`;
+      if (!a.receitas && !a.dividas && !a.gastos) return html + `<div class="card empty">Sem dados em ${state.ano}.</div>`;
       if (a.estimados) html += `<div class="banner blue">ℹ️ <div>Este relatório inclui ${a.estimados} lançamento(s) variável(is) ainda sem valor real — o saldo é uma previsão até você informar cada mês.</div></div>`;
       html += `<div class="saldo ${a.saldo >= 0 ? 'pos' : 'neg'}"><small>Resultado de ${state.ano}</small><b>${brl(a.saldo)}</b><small>${a.mesesPositivos} mês(es) positivo(s) · ${a.mesesNegativos} negativo(s)</small></div>`;
-      html += `<div class="grid3"><div class="stat"><small>Receitas</small><b class="pos-t">${brl(a.receitas)}</b></div><div class="stat"><small>Dívidas</small><b class="neg-t">${brl(a.dividas)}</b></div><div class="stat"><small>Saldo</small><b class="${a.saldo >= 0 ? 'pos-t' : 'neg-t'}">${brl(a.saldo)}</b></div></div>`;
-      // gráfico
-      const max = Math.max(1, ...a.meses.flatMap((m) => [m.receitas, m.dividas]));
+      html += `<div class="grid3"><div class="stat"><small>Receitas</small><b class="pos-t">${brl(a.receitas)}</b></div><div class="stat"><small>Dívidas</small><b class="neg-t">${brl(a.dividas)}</b></div><div class="stat"><small>Gastos</small><b class="violet-t">${brl(a.gastos)}</b></div></div>`;
+      const max = Math.max(1, ...a.meses.flatMap((m) => [m.receitas, m.dividas, m.gastos]));
       const base = 130, alt = 110;
       let bars = '';
       a.meses.forEach((m, i) => {
-        const x = 8 + i * 29, hr = (m.receitas / max) * alt, hd = (m.dividas / max) * alt;
-        bars += `<rect x="${x}" y="${base - hr}" width="11" height="${hr}" rx="2" style="fill:var(--green)"/><rect x="${x + 12}" y="${base - hd}" width="11" height="${hd}" rx="2" style="fill:var(--red)"/><text x="${x + 11.5}" y="144" text-anchor="middle">${MES_CURTO[i]}</text>`;
-        if (m.receitas || m.dividas) bars += `<circle cx="${x + 11.5}" cy="153" r="3" style="fill:var(${m.saldo >= 0 ? '--green' : '--red'})"/>`;
+        const x = 8 + i * 29, bw = 7;
+        [[m.receitas, '--c-rec'], [m.dividas, '--c-div'], [m.gastos, '--c-gas']].forEach(([v, cor], j) => {
+          const hh = (v / max) * alt;
+          bars += `<rect x="${x + j * (bw + 1)}" y="${base - hh}" width="${bw}" height="${hh}" rx="2" style="fill:var(${cor})"/>`;
+        });
+        bars += `<text x="${x + 11.5}" y="144" text-anchor="middle">${MES_CURTO[i]}</text>`;
+        if (m.receitas || m.dividas || m.gastos) bars += `<circle cx="${x + 11.5}" cy="153" r="3" style="fill:var(${m.saldo >= 0 ? '--green' : '--red'})"/>`;
       });
-      html += `<div class="card"><h2>Receitas × dívidas por mês</h2><svg class="chart" viewBox="0 0 360 160" role="img" aria-label="Gráfico anual">${bars}<line x1="4" x2="356" y1="${base}" y2="${base}" style="stroke:var(--line)"/></svg>
-        <div class="legend"><span><i style="background:var(--green)"></i>Receitas</span><span><i style="background:var(--red)"></i>Dívidas</span><span>● saldo do mês</span></div></div>`;
-      // tabela
-      const linhas = a.meses.map((m, i) => `<tr><td>${MES_CURTO[i]}</td><td>${n2(m.receitas)}</td><td>${n2(m.dividas)}</td><td class="${m.saldo >= 0 ? 'pos-t' : 'neg-t'}">${m.receitas || m.dividas ? n2(m.saldo) : '–'}</td></tr>`).join('');
-      html += `<div class="card"><h2>Relatório gerencial (R$)</h2><table><thead><tr><th>Mês</th><th>Receitas</th><th>Dívidas</th><th>Saldo</th></tr></thead><tbody>${linhas}</tbody>
-        <tfoot><tr><td>Total</td><td>${n2(a.receitas)}</td><td>${n2(a.dividas)}</td><td class="${a.saldo >= 0 ? 'pos-t' : 'neg-t'}">${n2(a.saldo)}</td></tr></tfoot></table></div>`;
+      html += `<div class="card"><h2>Receitas × dívidas × gastos</h2><svg class="chart" viewBox="0 0 360 160" role="img" aria-label="Gráfico anual">${bars}<line x1="4" x2="356" y1="${base}" y2="${base}" style="stroke:var(--line)"/></svg>
+        <div class="legend"><span><i style="background:var(--c-rec)"></i>Receitas</span><span><i style="background:var(--c-div)"></i>Dívidas</span><span><i style="background:var(--c-gas)"></i>Gastos</span><span>● saldo do mês</span></div></div>`;
+      const linhas = a.meses.map((m, i) => `<tr><td>${MES_CURTO[i]}</td><td>${n2(m.receitas)}</td><td>${n2(m.dividas)}</td><td>${n2(m.gastos)}</td><td class="${m.saldo >= 0 ? 'pos-t' : 'neg-t'}">${m.receitas || m.dividas || m.gastos ? n2(m.saldo) : '–'}</td></tr>`).join('');
+      html += `<div class="card"><h2>Relatório gerencial (R$)</h2><table><thead><tr><th>Mês</th><th>Receitas</th><th>Dívidas</th><th>Gastos</th><th>Saldo</th></tr></thead><tbody>${linhas}</tbody>
+        <tfoot><tr><td>Total</td><td>${n2(a.receitas)}</td><td>${n2(a.dividas)}</td><td>${n2(a.gastos)}</td><td class="${a.saldo >= 0 ? 'pos-t' : 'neg-t'}">${n2(a.saldo)}</td></tr></tfoot></table></div>`;
       const tipos = Object.entries(a.porTipo).sort((x, y) => y[1] - x[1]);
       if (tipos.length) html += `<div class="card"><h2>Dívidas por tipo em ${state.ano}</h2>${tipos.map(([t, v]) => `<div class="bar-row"><span>${esc(t)}</span><b>${brl(v)}</b></div>`).join('')}</div>`;
+      const tg = Object.entries(a.porTipoGasto).sort((x, y) => y[1] - x[1]);
+      if (tg.length) html += `<div class="card"><h2>Gastos por tipo de compra em ${state.ano}</h2>${tg.map(([t, v]) => `<div class="bar-row"><span>${esc(t)}</span><b>${brl(v)}</b></div>`).join('')}${a.jurosCartao > 0 ? `<p class="hint" style="margin:10px 0 0">Juros pagos em compras parceladas no crédito: <b>${brl(a.jurosCartao)}</b></p>` : ''}</div>`;
       html += `<button class="btn alt" data-act="expCSV">⬇️ Exportar relatório (CSV para Excel)</button>`;
       return html;
     },
@@ -193,6 +248,10 @@
         <label class="field"><span>Hora do lembrete no dia do vencimento</span><input type="time" id="hora" value="${esc(state.cfg.hora)}"></label>
         <button class="btn" data-act="calTodos">Salvar todos os vencimentos no calendário</button>
         <p class="hint" style="margin-top:10px">Cria um evento com alarme no dia de cada vencimento em aberto (próximos 12 meses). Se repetir a ação, o calendário atualiza os eventos existentes.</p></div>
+      <div class="card"><h2>💳 Cartão de crédito</h2>
+        <div class="row2"><label class="field"><span>Dia em que a fatura fecha</span><input type="number" id="cartaoFecha" min="1" max="31" inputmode="numeric" value="${esc(state.cfg.cartaoFecha || '')}" placeholder="Ex.: 25"></label>
+        <label class="field"><span>Dia do vencimento</span><input type="number" id="cartaoVenc" min="1" max="31" inputmode="numeric" value="${esc(state.cfg.cartaoVenc || '')}" placeholder="Ex.: 5"></label></div>
+        <p class="hint">Compras feitas depois do fechamento caem na fatura seguinte. Se deixar vazio, a 1ª parcela é contada 1 mês depois da compra.</p></div>
       <div class="card"><h2>💾 Backup dos dados</h2><div class="btns">
         <button class="btn alt" data-act="expJSON">⬇️ Exportar backup (.json)</button>
         <button class="btn alt" data-act="impJSON">⬆️ Importar backup</button></div>
@@ -204,8 +263,8 @@
 
   function render() {
     document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === state.tab));
-    $('#title').textContent = { resumo: 'Planejamento Familiar', dividas: 'Dívidas', receitas: 'Receitas', relatorio: 'Relatório anual', mais: 'Mais opções' }[state.tab];
-    $('#fab').style.display = ['resumo', 'dividas', 'receitas'].includes(state.tab) ? '' : 'none';
+    $('#title').textContent = { resumo: 'Planejamento Familiar', dividas: 'Dívidas', gastos: 'Gastos', receitas: 'Receitas', relatorio: 'Relatório anual', mais: 'Mais opções' }[state.tab];
+    $('#fab').style.display = ['resumo', 'dividas', 'gastos', 'receitas'].includes(state.tab) ? '' : 'none';
     $('#view').innerHTML = views[state.tab]();
   }
 
@@ -356,6 +415,77 @@
     await DB.put('rendas', r);
     pedirPersistencia();
     await reload(); closeSheet(); render(); toast('Receita salva ✔');
+  }
+
+  // ---------- gastos: lançamento rápido (Crédito, Débito ou Pix) ----------
+  function formCompra(id, forma0) {
+    const c = id ? state.compras.find((x) => x.id === id) : null;
+    const v = c || { forma: forma0 || lsGet('pf-forma') || 'credito', valor: '', parcelas: 1, valorParcela: '', tipo: 'Mercado', descricao: '', data: hoje() };
+    const preset = L.TIPOS_COMPRA.includes(v.tipo);
+    const tipos = L.TIPOS_COMPRA.map((t) => `<option ${v.tipo === t ? 'selected' : ''}>${esc(t)}</option>`).join('') + `<option value="__custom" ${preset ? '' : 'selected'}>➕ Outro (digitar)</option>`;
+    const parcs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<option value="${n}" ${+v.parcelas === n ? 'selected' : ''}>${n === 1 ? 'À vista' : n + 'x'}</option>`).join('');
+    openSheet(`<h3>${c ? 'Editar gasto' : 'Lançar gasto'}</h3>
+      <form id="fCompra" data-id="${esc(id || '')}" autocomplete="off">
+        <input type="hidden" name="forma" value="${esc(v.forma)}">
+        <div class="forma">${['credito', 'debito', 'pix'].map((k) => `<button type="button" data-act="forma" data-v="${k}" class="${v.forma === k ? 'on' : ''}">${ICO[k].replace('width="20" height="20"', 'width="24" height="24"')}${L.FORMAS[k]}</button>`).join('')}</div>
+        <label class="field big"><span id="lblValorC">Valor (R$)</span><input type="number" name="valor" step="0.01" min="0" inputmode="decimal" required placeholder="0,00" value="${esc(v.valor)}"></label>
+        <div id="blocoCred">
+          <label class="field"><span>Número de parcelas</span><select name="parcelas">${parcs}</select></label>
+          <label class="field" id="wrapParcela"><span>Valor de cada parcela (R$)</span><input type="number" name="valorParcela" step="0.01" min="0" inputmode="decimal" placeholder="Valor que o cartão cobra por parcela" value="${esc(v.valorParcela || '')}"></label>
+          <div class="box" id="boxJuros"></div>
+        </div>
+        <label class="field"><span>Tipo de compra</span><select name="tipo">${tipos}</select></label>
+        <label class="field" id="wrapCustomC" hidden><span>Qual tipo?</span><input name="tipoCustom" value="${preset ? '' : esc(v.tipo)}" placeholder="Ex.: Pet, Academia"></label>
+        <label class="field"><span>Descrição (opcional)</span><input name="descricao" value="${esc(v.descricao || '')}" placeholder="Ex.: Supermercado Extra"></label>
+        <label class="field"><span>Data da compra</span><input type="date" name="data" required value="${esc(v.data)}"></label>
+        <div class="err" id="err"></div>
+        <button class="btn" type="submit">Salvar gasto</button>
+      </form>
+      <div class="btns" style="margin-top:8px">${c ? `<button class="btn danger" data-act="delCompra" data-id="${esc(c.id)}">Excluir gasto</button>` : ''}<button class="btn alt" data-act="fechar">Cancelar</button></div>`);
+    syncCompra();
+    if (!c) setTimeout(() => { const i = $('#fCompra input[name=valor]'); if (i) i.focus(); }, 60);
+  }
+
+  function syncCompra() {
+    const f = $('#fCompra'); if (!f) return;
+    const forma = f.forma.value, cred = forma === 'credito';
+    document.querySelectorAll('#fCompra .forma button').forEach((b) => b.classList.toggle('on', b.dataset.v === forma));
+    $('#blocoCred').hidden = !cred;
+    $('#wrapCustomC').hidden = f.tipo.value !== '__custom';
+    $('#lblValorC').textContent = cred ? 'Valor da compra à vista (R$)' : 'Valor (R$)';
+    if (!cred) return;
+    const n = +f.parcelas.value || 1, valor = num(f.valor.value), pv = f.valorParcela.value;
+    $('#wrapParcela').hidden = n <= 1;
+    const prim = fmtData(L.vencimentoParcela(f.data.value || hoje(), state.cfg, 0));
+    let txt;
+    if (n <= 1) txt = `À vista no crédito · cai na fatura de <b>${prim}</b>`;
+    else if (!(valor > 0)) txt = 'Informe o valor da compra para calcular o parcelamento.';
+    else {
+      const calc = L.calcParcelamento(valor, n, pv === '' ? 0 : num(pv));
+      if (pv === '') txt = `Sem informar a parcela, considero <b>sem juros</b>: ${n}x de <b>${brl(calc.parcela)}</b>.`;
+      else if (calc.invalido) txt = `⚠️ ${n}x de ${brl(calc.parcela)} soma ${brl(calc.total)}, menos que o valor da compra.`;
+      else if (calc.semJuros) txt = `Sem juros ✔ · total <b>${brl(calc.total)}</b>`;
+      else txt = `Total a pagar: <b>${brl(calc.total)}</b><br>Juros: <b>${brl(calc.juros)}</b> (≈ ${n2(calc.taxa)}% ao mês)`;
+      txt += `<br>1ª parcela em <b>${prim}</b>`;
+    }
+    $('#boxJuros').innerHTML = txt;
+  }
+
+  async function salvarCompra(f) {
+    const id = f.dataset.id, old = id ? state.compras.find((x) => x.id === id) : null;
+    const forma = f.forma.value;
+    const tipo = f.tipo.value === '__custom' ? f.tipoCustom.value.trim() : f.tipo.value;
+    const cred = forma === 'credito', n = cred ? +f.parcelas.value || 1 : 1;
+    const c = Object.assign(old ? {} : { id: uid(), criadoEm: Date.now() }, old || {}, {
+      forma, valor: num(f.valor.value), tipo: tipo || 'Outros', descricao: f.descricao.value.trim(), data: f.data.value,
+      parcelas: n, valorParcela: cred && n > 1 && f.valorParcela.value !== '' ? num(f.valorParcela.value) : 0 });
+    const erros = L.validarCompra(c);
+    if (erros.length) { $('#err').textContent = erros.join(' '); return; }
+    await DB.put('compras', c);
+    pedirPersistencia(); lsSet('pf-forma', forma);
+    if (state.tab === 'gastos' && state.visaoG === 'compras') state.ym = c.data.slice(0, 7);
+    await reload(); closeSheet(); render();
+    toast('Gasto salvo ✔', '➕ Outro', () => formCompra(null, forma));
   }
 
   // ---------- ocorrência (valor do mês / pagar / desfazer) ----------
@@ -509,7 +639,7 @@
 
   // ---------- backup / exportação ----------
   function exportarJSON() {
-    const data = { app: 'planejamento-familiar', versao: 1, exportadoEm: new Date().toISOString(), dividas: state.dividas, rendas: state.rendas, config: state.cfg };
+    const data = { app: 'planejamento-familiar', versao: 2, exportadoEm: new Date().toISOString(), dividas: state.dividas, rendas: state.rendas, compras: state.compras, config: state.cfg };
     baixar(new File([JSON.stringify(data, null, 2)], `backup-planejamento-familiar-${hoje()}.json`, { type: 'application/json' }));
     toast('Backup exportado ✔');
   }
@@ -517,19 +647,25 @@
     try {
       const data = JSON.parse(await file.text());
       if (data.app !== 'planejamento-familiar' || !Array.isArray(data.dividas) || !Array.isArray(data.rendas)) throw new Error('formato');
+      const compras = Array.isArray(data.compras) ? data.compras : [];
       for (const d of data.dividas) if (d && d.id) await DB.put('dividas', d);
       for (const r of data.rendas) if (r && r.id) await DB.put('rendas', r);
-      if (data.config && data.config.hora) await DB.setConfig('hora', data.config.hora);
-      await reload(); render(); toast(`Importado: ${data.dividas.length} dívida(s) e ${data.rendas.length} receita(s).`);
+      for (const c of compras) if (c && c.id) await DB.put('compras', c);
+      if (data.config) for (const k of ['hora', 'cartaoFecha', 'cartaoVenc']) if (data.config[k]) await DB.setConfig(k, data.config[k]);
+      await reload(); render(); toast(`Importado: ${data.dividas.length} dívida(s), ${data.rendas.length} receita(s) e ${compras.length} gasto(s).`);
     } catch (e) { toast('Arquivo inválido. Use um backup exportado por este app.'); }
   }
   function exportarCSV() {
-    const a = L.resumoAno(state.dividas, state.rendas, state.ano, hoje());
+    const a = L.resumoAno(state.dividas, state.rendas, state.ano, hoje(), state.compras, state.cfg);
     const c = (v) => String(v.toFixed ? v.toFixed(2) : v).replace('.', ',');
-    const rows = [['Mês', 'Receitas', 'Dívidas', 'Saldo', 'Situação']];
-    a.meses.forEach((m, i) => rows.push([MESES[i], c(m.receitas), c(m.dividas), c(m.saldo), m.receitas || m.dividas ? (m.saldo >= 0 ? 'Positivo' : 'Negativo') : '']));
-    rows.push(['Total', c(a.receitas), c(a.dividas), c(a.saldo), a.saldo >= 0 ? 'Positivo' : 'Negativo'], [], ['Tipo de dívida', 'Total no ano']);
+    const sit = (m) => (m.receitas || m.dividas || m.gastos ? (m.saldo >= 0 ? 'Positivo' : 'Negativo') : '');
+    const rows = [['Mês', 'Receitas', 'Dívidas', 'Gastos', 'Saldo', 'Situação']];
+    a.meses.forEach((m, i) => rows.push([MESES[i], c(m.receitas), c(m.dividas), c(m.gastos), c(m.saldo), sit(m)]));
+    rows.push(['Total', c(a.receitas), c(a.dividas), c(a.gastos), c(a.saldo), a.saldo >= 0 ? 'Positivo' : 'Negativo'], [], ['Tipo de dívida', 'Total no ano']);
     Object.entries(a.porTipo).sort((x, y) => y[1] - x[1]).forEach(([t, v]) => rows.push([t, c(v)]));
+    rows.push([], ['Tipo de compra', 'Total no ano']);
+    Object.entries(a.porTipoGasto).sort((x, y) => y[1] - x[1]).forEach(([t, v]) => rows.push([t, c(v)]));
+    rows.push([], ['Juros pagos em parcelamentos no crédito', c(a.jurosCartao)]);
     const csv = '﻿' + rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
     baixar(new File([csv], `relatorio-${state.ano}.csv`, { type: 'text/csv' }));
   }
@@ -539,6 +675,11 @@
     mes: (t) => { state.ym = shiftYM(state.ym, +t.dataset.n); render(); },
     ano: (t) => { state.ano += +t.dataset.n; render(); },
     filtro: (t) => { state.filtro = t.dataset.v; render(); },
+    visaoG: (t) => { state.visaoG = t.dataset.v; render(); },
+    novoGasto: () => formCompra(),
+    compra: (t) => formCompra(t.dataset.id),
+    forma: (t) => { const f = t.closest('form'); f.forma.value = t.dataset.v; syncCompra(); },
+    delCompra: async (t) => { if (!confirm('Excluir este gasto?')) return; await DB.del('compras', t.dataset.id); await reload(); closeSheet(); render(); toast('Gasto excluído'); },
     occ: (t) => sheetOcc(t.dataset.id, t.dataset.key),
     renda: (t) => { const r = state.rendas.find((x) => x.id === t.dataset.id); if (r && r.recorrente) sheetRenda(r.id, t.dataset.key); else formRenda(t.dataset.id); },
     editRenda: (t) => formRenda(t.dataset.id),
@@ -566,9 +707,9 @@
     expCSV: exportarCSV,
     instalar: async () => { if (installEvt) { installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); } },
     limpar: async () => {
-      if (!confirm('Apagar TODAS as dívidas e receitas deste celular? Isso não pode ser desfeito.')) return;
+      if (!confirm('Apagar TODAS as dívidas, receitas e gastos deste celular? Isso não pode ser desfeito.')) return;
       if (!confirm('Tem certeza? Faça um backup antes se tiver dúvida.')) return;
-      await DB.clear('dividas'); await DB.clear('rendas'); await reload(); render(); toast('Dados apagados');
+      await DB.clear('dividas'); await DB.clear('rendas'); await DB.clear('compras'); await reload(); render(); toast('Dados apagados');
     },
   };
 
@@ -578,7 +719,8 @@
     if (e.target.closest('#fab')) {
       if (state.tab === 'receitas') formRenda();
       else if (state.tab === 'dividas') formDivida();
-      else openSheet(`<h3>O que deseja adicionar?</h3><div class="btns"><button class="btn" data-act="novaDivida">🧾 Nova dívida</button><button class="btn alt" data-act="novaRenda">💰 Nova receita</button><button class="btn alt" data-act="fechar">Cancelar</button></div>`);
+      else if (state.tab === 'gastos') formCompra();
+      else openSheet(`<h3>O que deseja adicionar?</h3><div class="btns"><button class="btn" data-act="novoGasto">💳 Lançar gasto (Crédito, Débito ou Pix)</button><button class="btn alt" data-act="novaDivida">🧾 Nova dívida</button><button class="btn alt" data-act="novaRenda">💰 Nova receita</button><button class="btn alt" data-act="fechar">Cancelar</button></div>`);
       return;
     }
     const a = e.target.closest('[data-act]');
@@ -590,6 +732,7 @@
     if (e.target.id === 'payDate' || e.target.id === 'valorOcc') return atualizarEnc();
     if (e.target.form && e.target.form.id === 'fDivida') syncForm();
     if (e.target.form && e.target.form.id === 'fRenda') syncRenda();
+    if (e.target.form && e.target.form.id === 'fCompra') syncCompra();
   });
   $('#sheetBody').addEventListener('change', (e) => {
     const f = e.target.form;
@@ -600,13 +743,19 @@
       syncForm();
     }
     if (f && f.id === 'fRenda') syncRenda();
+    if (f && f.id === 'fCompra') syncCompra();
   });
   $('#sheetBody').addEventListener('submit', (e) => {
     e.preventDefault();
     if (e.target.id === 'fDivida') salvarDivida(e.target);
     if (e.target.id === 'fRenda') salvarRenda(e.target);
+    if (e.target.id === 'fCompra') salvarCompra(e.target);
   });
   document.addEventListener('change', async (e) => {
+    if (e.target.id === 'cartaoFecha' || e.target.id === 'cartaoVenc') {
+      const n = parseInt(e.target.value, 10), val = n >= 1 && n <= 31 ? String(n) : '';
+      state.cfg[e.target.id] = val; e.target.value = val; await DB.setConfig(e.target.id, val); toast('Dia do cartão salvo');
+    }
     if (e.target.id === 'hora') { state.cfg.hora = e.target.value || '09:00'; await DB.setConfig('hora', state.cfg.hora); toast('Hora do lembrete salva'); }
     if (e.target.id === 'importFile' && e.target.files[0]) { await importarJSON(e.target.files[0]); e.target.value = ''; }
   });

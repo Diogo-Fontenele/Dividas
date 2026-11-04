@@ -1,7 +1,7 @@
 /* Banco de dados local (IndexedDB) — tudo fica no celular. */
 (function () {
   'use strict';
-  const NAME = 'planejamento-familiar', VERSION = 1;
+  const NAME = 'planejamento-familiar', VERSION = 2;
   let dbp = null;
 
   function open() {
@@ -12,6 +12,7 @@
         const db = req.result;
         if (!db.objectStoreNames.contains('dividas')) db.createObjectStore('dividas', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('rendas')) db.createObjectStore('rendas', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('compras')) db.createObjectStore('compras', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('config')) db.createObjectStore('config', { keyPath: 'chave' });
       };
       req.onsuccess = () => resolve(req.result);

@@ -1,6 +1,6 @@
 # Planejamento Familiar
 
-App instalável (PWA) para Android: cadastro de dívidas e receitas da família, lembrete de vencimento, juros de atraso, empréstimos por parcela e relatório anual (saldo positivo/negativo por mês).
+App instalável (PWA) para Android: cadastro de dívidas, gastos (crédito, débito e Pix) e receitas da família, lembrete de vencimento, juros de atraso, empréstimos por parcela e relatório anual (saldo positivo/negativo por mês).
 
 - **Banco de dados local** no celular (IndexedDB) — nenhum dado sai do aparelho.
 - **Funciona offline** depois da primeira abertura.
@@ -28,6 +28,16 @@ Com o link já publicado, acesse **pwabuilder.com**, cole a URL, escolha **Andro
 | **Notificação do app** | Ao abrir o app, avisa o que vence hoje e o que está em atraso. No Chrome com o app instalado, também tenta avisar em segundo plano. |
 
 Apps web não conseguem agendar alarmes exatos sozinhos no Android — por isso o calendário é o jeito garantido de ser avisado no dia.
+
+## Gastos do dia a dia (lançamento rápido)
+
+Na aba **Gastos** (ou no botão **+**) lance cada compra na hora, escolhendo **Crédito, Débito ou Pix**:
+
+- **Débito e Pix**: valor, tipo de compra e data.
+- **Crédito**: valor da compra à vista, número de parcelas (À vista, 2x até 10x), tipo de compra e data. Se for parcelado, informe o **valor da parcela** que o cartão cobra: o app calcula sozinho o total, o juros em R$ e a taxa mensal aproximada. Deixando a parcela em branco, o app considera parcelado sem juros.
+- A **data da compra** já vem como hoje, mas pode ser alterada se você esqueceu de lançar.
+- Em **Mais → Cartão de crédito**, informe o dia em que a fatura fecha e o dia do vencimento. Compras feitas depois do fechamento caem na fatura seguinte. Sem essa configuração, a 1ª parcela vence 1 mês depois da compra.
+- Aba **Gastos → Fatura do cartão** mostra as parcelas que vencem em cada mês. Débito e Pix entram no saldo na data da compra; o crédito entra parcela a parcela, no vencimento da fatura.
 
 ## Regras de cálculo
 
