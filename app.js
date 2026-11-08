@@ -19,7 +19,7 @@
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 
-  const state = { tab: 'resumo', ym: hoje().slice(0, 7), ano: +hoje().slice(0, 4), filtro: 'todas', visaoG: 'compras', dividas: [], rendas: [], compras: [], cfg: { hora: '09:00' } };
+  const state = { tab: 'resumo', ym: hoje().slice(0, 7), ano: +hoje().slice(0, 4), filtro: 'todas', g: { periodo: 'mes', data: hoje(), formas: [], tipos: [] }, gOpen: new Set(), dividas: [], rendas: [], compras: [], cfg: { hora: '09:00' } };
   let cur = null; // ocorrência de dívida aberta no sheet
   let curR = null; // ocorrência de receita aberta no sheet
   let installEvt = null;
@@ -103,20 +103,64 @@
     debito: svg('<path d="M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4z"/><path d="M4 7V6a2 2 0 0 1 2-2h10"/><path d="M16 14h2"/>'),
     pix: svg('<path d="M12 3l5 5-5 5-5-5z"/><path d="M12 11l5 5-5 5-5-5z"/>'),
   };
-  function itemCompra(c) {
-    const { dia, mes } = diaMes(c.data);
-    const calc = c.forma === 'credito' ? L.calcParcelamento(c.valor, c.parcelas, c.valorParcela) : null;
-    const parc = calc ? (calc.n > 1 ? `${calc.n}x de ${brl(calc.parcela)}` : 'À vista') : '';
-    const sub = [L.FORMAS[c.forma], parc, c.descricao].filter(Boolean).join(' · ');
-    const juros = calc && calc.juros > 0 ? `<small class="neg-t">+${brl(calc.juros)} de juros</small>` : '';
-    return `<button class="item" data-act="compra" data-id="${esc(c.id)}"><div class="day">${dia}<small>${mes}</small></div>
-      <div class="main"><b>${esc(c.tipo)}</b><span>${esc(sub)}</span></div><div class="val">${brl(c.valor)}${juros}</div></button>`;
+  const DIAS_SEM = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  const diaSem = (iso) => DIAS_SEM[L.parseISO(iso).getDay()];
+  const compacto = (v) => (v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1).replace('.', ',') + ' mil' : String(Math.round(v)));
+  const CHEV = svg('<path d="M6 9l6 6 6-6"/>', 18).replace('<svg ', '<svg class="chev" ');
+  const FUNIL = svg('<path d="M3 5h18l-7 8v6l-4 2v-8z"/>', 20);
+
+  // Gráfico de barras (diário no mês/dia; mensal no ano). Toque numa barra para detalhar.
+  function barChart(pts, o) {
+    const base = 112, alt = 92, n = pts.length, slot = 340 / n, bw = Math.max(4, slot - (n > 20 ? 2.5 : 9));
+    const max = Math.max(1, ...pts.map((p) => p.valor));
+    let g = '<defs><linearGradient id="gBar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#3b82f6"/></linearGradient></defs>';
+    [0.5, 1].forEach((f) => { g += `<line x1="10" x2="350" y1="${base - alt * f}" y2="${base - alt * f}" style="stroke:var(--line-soft)"/>`; });
+    g += `<text x="10" y="${base - alt - 4}">R$ ${compacto(max)}</text>`;
+    pts.forEach((p, i) => {
+      const x = 10 + i * slot + (slot - bw) / 2, hh = p.valor > 0 ? Math.max(3, (p.valor / max) * alt) : 0, sel = p.chave === o.sel;
+      if (hh) g += `<rect x="${x.toFixed(1)}" y="${(base - hh).toFixed(1)}" width="${bw.toFixed(1)}" height="${hh.toFixed(1)}" rx="${Math.min(3, bw / 2).toFixed(1)}" fill="${sel ? '#f5f3ff' : 'url(#gBar)'}"/>`;
+      if (p.rot) g += `<text x="${(x + bw / 2).toFixed(1)}" y="${base + 14}" text-anchor="middle" style="${sel ? 'fill:#fff;font-weight:700' : ''}">${p.rot}</text>`;
+      if (p.hoje) g += `<circle cx="${(x + bw / 2).toFixed(1)}" cy="${base + 22}" r="2.5" style="fill:var(--violet-2)"/>`;
+      g += `<rect x="${(10 + i * slot).toFixed(1)}" y="${base - alt}" width="${slot.toFixed(1)}" height="${alt + 18}" fill="transparent" style="cursor:pointer" data-act="${o.act}" data-d="${p.data}"/>`;
+    });
+    return `<svg class="chart" viewBox="0 0 360 ${base + 28}" role="img" aria-label="${esc(o.aria)}">${g}</svg>`;
   }
-  function itemFatura(i) {
-    const { dia, mes } = diaMes(i.venc);
-    const sub = [i.de > 1 ? `Parcela ${i.n}/${i.de}` : 'À vista', 'compra em ' + fmtData(i.c.data), i.c.descricao].filter(Boolean).join(' · ');
-    return `<button class="item" data-act="compra" data-id="${esc(i.compraId)}"><div class="day">${dia}<small>${mes}</small></div>
-      <div class="main"><b>${esc(i.c.tipo)}</b><span>${esc(sub)}</span></div><div class="val">${brl(i.valor)}</div></button>`;
+
+  // Detalhes de um lançamento (aparece ao tocar no cartão).
+  function detalheHtml(i) {
+    const c = i.c, rows = [['Data da compra', fmtData(c.data)], ['Forma de pagamento', L.FORMAS[c.forma]], ['Tipo de compra', c.tipo]];
+    if (c.descricao) rows.push(['Descrição', c.descricao]);
+    rows.push(['Valor da compra', brl(c.valor)]);
+    if (c.forma === 'credito') {
+      const calc = L.calcParcelamento(c.valor, c.parcelas, c.valorParcela);
+      if (calc.n > 1) {
+        const rest = L.itensCompra(c, state.cfg).filter((x) => x.n > i.n);
+        rows.push(['Parcelamento', `${calc.n}x de ${brl(calc.parcela)}`], ['Total com juros', brl(calc.total)],
+          ['Juros', calc.juros > 0 ? `${brl(calc.juros)} (≈ ${n2(calc.taxa)}% ao mês)` : 'Sem juros'],
+          ['Esta parcela', `${i.n} de ${i.de} · ${fmtData(i.venc)}`],
+          ['Parcelas restantes', rest.length ? `${rest.length} (${brl(L.round2(rest.reduce((s2, x) => s2 + x.valor, 0)))})` : 'Nenhuma, é a última']);
+      } else rows.push(['Vencimento', fmtData(i.venc)]);
+    }
+    return `<dl class="gd">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+      <div class="row2"><button class="btn alt" data-act="compra" data-id="${esc(c.id)}">✏️ Editar</button><button class="btn danger" data-act="delCompra" data-id="${esc(c.id)}">Excluir</button></div>`;
+  }
+  // Cada lançamento mostra o valor DA PARCELA daquele mês (não o total da compra).
+  function gItem(i) {
+    const c = i.c, k = i.compraId + ':' + i.key, open = state.gOpen.has(k);
+    const sub = [L.FORMAS[c.forma], i.de > 1 ? `Parcela ${i.n}/${i.de}` : (c.forma === 'credito' ? 'À vista' : ''), c.descricao].filter(Boolean).join(' · ');
+    return `<div class="gitem${open ? ' open' : ''}" style="--tc:${L.corTipo(c.tipo)}" data-k="${esc(k)}">
+      <button class="ghead" data-act="toggleG" aria-expanded="${open}"><span class="dot"></span>
+        <span class="main"><b>${esc(c.tipo)}</b><span>${esc(sub)}</span></span>
+        <span class="val">${brl(i.valor)}<small>${i.de > 1 ? `parcela ${i.n}/${i.de}` : fmtData(i.venc).slice(0, 5)}</small></span>${CHEV}</button>
+      <div class="gdetail" ${open ? '' : 'hidden'}>${detalheHtml(i)}</div></div>`;
+  }
+  function sheetFiltro() {
+    const g = state.g;
+    openSheet(`<h3>Filtrar gastos</h3><form id="fFiltro">
+      <div class="field"><span>Forma de pagamento</span><div class="fchips">${['credito', 'debito', 'pix'].map((k) => `<label class="fchip"><input type="checkbox" name="forma" value="${k}" ${g.formas.includes(k) ? 'checked' : ''}><span>${ICO[k]}${L.FORMAS[k]}</span></label>`).join('')}</div></div>
+      <div class="field"><span>Tipo de compra</span><div class="fchips">${L.tiposUsados(state.compras).map((t) => `<label class="fchip"><input type="checkbox" name="tipo" value="${esc(t)}" ${g.tipos.includes(t) ? 'checked' : ''}><span><i class="dot" style="background:${L.corTipo(t)}"></i>${esc(t)}</span></label>`).join('')}</div></div>
+      <p class="hint">Sem nenhuma seleção, todos os gastos aparecem.</p>
+      <div class="btns"><button class="btn" type="submit">Aplicar filtro</button><button class="btn alt" type="button" data-act="limparFiltroG">Limpar filtros</button><button class="btn alt" type="button" data-act="fechar">Cancelar</button></div></form>`);
   }
 
   // ---------- views ----------
@@ -140,8 +184,8 @@
       html += `<div class="grid3"><div class="stat"><small>Receitas</small><b class="pos-t">${brl(r.receitas)}</b></div>
         <div class="stat"><small>Contas</small><b class="neg-t">${brl(r.dividas)}</b></div>
         <div class="stat"><small>Gastos</small><b class="violet-t">${brl(r.gastos)}</b></div></div>
-        <p class="hint" style="margin:-4px 2px 12px">Gastos = débito, Pix e as parcelas do cartão que vencem neste mês.</p>`;
-      html += `<div class="card quick"><div><h2>Gastos de hoje</h2><b>${brl(totHoje)}</b><span class="sub">${hojeC.length ? hojeC.length + ' compra(s) lançada(s)' : 'Nenhuma compra lançada hoje'}</span></div><button class="btn mini" data-act="novoGasto">+ Lançar gasto</button></div>`;
+        <p class="hint" style="margin:-4px 2px 12px">Gastos = débito, Pix e as parcelas do cartão deste mês.</p>`;
+      html += `<div class="card quick"><div><h2>Compras de hoje</h2><b>${brl(totHoje)}</b><span class="sub">${hojeC.length ? hojeC.length + ' compra(s) lançada(s)' : 'Nenhuma compra lançada hoje'}</span></div><button class="btn mini" data-act="novoGasto">+ Lançar gasto</button></div>`;
       const pct = r.qtd ? Math.round((r.qtdPagas / r.qtd) * 100) : 0;
       html += `<div class="card"><h2>Contas pagas no mês</h2><b>${r.qtdPagas} de ${r.qtd}</b> · falta pagar ${brl(r.aberto + r.atrasado)}<div class="progress"><i style="width:${pct}%"></i></div></div>`;
       html += `<h2 style="font-size:13px;color:var(--muted);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.04em">Próximos vencimentos (30 dias)</h2>`;
@@ -150,27 +194,50 @@
     },
 
     gastos() {
-      const ym = state.ym, mesNome = MESES[+ym.slice(5, 7) - 1];
-      let html = monthNav(labelYM(ym), 'mes');
-      html += `<div class="segment">${[['compras', 'Compras'], ['fatura', 'Fatura do cartão']].map(([k, t]) => `<button class="${state.visaoG === k ? 'on' : ''}" data-act="visaoG" data-v="${k}">${t}</button>`).join('')}</div>`;
-      if (state.visaoG === 'fatura') {
-        const itens = L.itensGastos(state.compras, state.cfg).filter((i) => i.forma === 'credito' && i.venc.startsWith(ym));
-        const tot = L.round2(itens.reduce((s2, i) => s2 + i.valor, 0));
-        html += `<div class="card"><h2>Fatura de ${esc(mesNome)}</h2><b class="big">${brl(tot)}</b><span class="sub">${itens.length} parcela(s) vencem neste mês${state.cfg.cartaoVenc ? '' : ' · configure o fechamento em Mais'}</span></div>`;
-        return html + (itens.length ? `<div class="list">${itens.map(itemFatura).join('')}</div>` : `<div class="card empty">Nenhuma parcela de cartão neste mês.</div>`);
+      const g = state.g, h = hoje(), P = g.periodo;
+      const A = L.analiseGastos(state.compras, state.cfg, g, h);
+      const label = P === 'dia' ? `${diaSem(g.data)}, ${fmtData(g.data)}` : P === 'mes' ? labelYM(g.data.slice(0, 7)) : g.data.slice(0, 4);
+      const nFiltros = g.formas.length + g.tipos.length;
+      let html = `<div class="toolbar"><div class="segment">${[['dia', 'Dia'], ['mes', 'Mês'], ['ano', 'Ano']].map(([k, t]) => `<button class="${P === k ? 'on' : ''}" data-act="periodoG" data-v="${k}">${t}</button>`).join('')}</div>
+        <button class="filterbtn${nFiltros ? ' on' : ''}" data-act="filtroG" aria-label="Filtrar">${FUNIL}${nFiltros ? `<i class="badge">${nFiltros}</i>` : ''}</button></div>`;
+      if (nFiltros) html += `<div class="achips">${[...g.formas.map((k) => ['forma', k, L.FORMAS[k]]), ...g.tipos.map((t) => ['tipo', t, t])].map(([k, v, t]) => `<button class="achip" data-act="rmF" data-k="${k}" data-v="${esc(v)}">${esc(t)} ✕</button>`).join('')}</div>`;
+      html += `<div class="monthnav"><button class="iconbtn" data-act="navG" data-n="-1" aria-label="Anterior">‹</button><strong>${esc(label)}</strong><button class="iconbtn" data-act="navG" data-n="1" aria-label="Próximo">›</button></div>`;
+
+      const nomeP = { dia: 'do dia', mes: 'do mês', ano: 'do ano' }[P], antP = { dia: 'dia anterior', mes: 'mês anterior', ano: 'ano anterior' }[P];
+      let delta = '';
+      if (A.total > 0 || A.totalAnt > 0) {
+        delta = A.totalAnt > 0 ? `<span class="delta ${A.delta > 0 ? 'up' : 'down'}">${A.delta > 0 ? '▲' : '▼'} ${brl(Math.abs(A.delta))}${A.deltaPct != null ? ` (${Math.abs(A.deltaPct).toFixed(0)}%)` : ''} vs ${antP}</span>`
+          : `<span class="delta">sem gastos no ${antP}</span>`;
       }
-      const cs = state.compras.filter((c) => (c.data || '').startsWith(ym)).sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || 0) - (a.criadoEm || 0));
-      const tot = L.round2(cs.reduce((s2, c) => s2 + (Number(c.valor) || 0), 0));
-      const porForma = { credito: 0, debito: 0, pix: 0 };
-      cs.forEach((c) => { porForma[c.forma] = L.round2((porForma[c.forma] || 0) + (Number(c.valor) || 0)); });
-      const juros = L.round2(cs.reduce((s2, c) => s2 + L.jurosCompra(c), 0));
-      html += `<div class="card"><h2>Gastos de ${esc(mesNome)}</h2><b class="big">${brl(tot)}</b><span class="sub">${cs.length} compra(s) lançada(s)${juros > 0 ? ' · ' + brl(juros) + ' de juros em parcelamentos' : ''}</span>
-        <div class="pillrow">${['credito', 'debito', 'pix'].map((k) => `<span class="pill">${ICO[k]}${L.FORMAS[k]} <b>${brl(porForma[k])}</b></span>`).join('')}</div></div>`;
-      const porTipo = {};
-      cs.forEach((c) => { porTipo[c.tipo] = L.round2((porTipo[c.tipo] || 0) + (Number(c.valor) || 0)); });
-      const cats = Object.entries(porTipo).sort((x, y) => y[1] - x[1]).slice(0, 5);
-      if (cats.length) html += `<div class="card"><h2>Onde mais gastei</h2>${cats.map(([t, v]) => `<div class="cat"><div class="row"><span>${esc(t)}</span><b>${brl(v)}</b></div><div class="bar"><i style="width:${tot ? Math.max(3, Math.round((v / tot) * 100)) : 0}%"></i></div></div>`).join('')}</div>`;
-      return html + (cs.length ? `<div class="list">${cs.map(itemCompra).join('')}</div>` : `<div class="card empty">Nenhum gasto neste mês.<br><br><button class="btn" data-act="novoGasto">+ Lançar gasto</button></div>`);
+      html += `<div class="card"><h2>Gastos ${nomeP}</h2><b class="big">${brl(A.total)}</b>${delta}<span class="sub">${A.qtd} lançamento(s)${P === 'ano' ? '' : ' · crédito parcelado mostra só a parcela'}</span>
+        <div class="pillrow">${['credito', 'debito', 'pix'].map((k) => `<span class="pill">${ICO[k]}${L.FORMAS[k]} <b>${brl(A.porForma[k])}</b></span>`).join('')}</div>
+        ${A.media != null ? `<div class="grid2"><div class="mini"><small>${A.mediaRotulo}</small><b>${brl(A.media)}</b></div><div class="mini"><small>Maior ${P === 'ano' ? 'mês' : 'dia'}</small><b>${A.maior && A.maior.valor > 0 ? brl(A.maior.valor) : '—'}</b>${A.maior && A.maior.valor > 0 ? `<small>${P === 'ano' ? MESES[+A.maior.data.slice(5, 7) - 1] : fmtData(A.maior.data).slice(0, 5)}</small>` : ''}</div></div>` : ''}</div>`;
+
+      const ym = g.data.slice(0, 7), hoyKey = P === 'ano' ? h.slice(0, 7) : h;
+      const pts = A.serie.map((p, i) => P === 'ano'
+        ? { data: p.data, chave: p.ym, valor: p.valor, rot: MES_CURTO[i], hoje: p.ym === hoyKey }
+        : { data: p.data, chave: p.data, valor: p.valor, rot: (i + 1 === 1 || (i + 1) % 5 === 0) ? String(i + 1) : '', hoje: p.data === hoyKey });
+      html += `<div class="card"><h2>${P === 'ano' ? 'Gastos por mês' : 'Gastos por dia · ' + esc(MESES[+ym.slice(5, 7) - 1])}</h2>${barChart(pts, { sel: P === 'dia' ? g.data : null, act: P === 'ano' ? 'mesG' : 'diaG', aria: 'Gráfico de gastos' })}
+        <p class="hint" style="margin:6px 0 0">Toque em uma barra para ${P === 'ano' ? 'abrir o mês' : 'ver o dia'}.</p></div>`;
+
+      if (A.porTipo.length) {
+        html += `<div class="card"><h2>Onde mais gastei</h2><div class="stack">${A.porTipo.map((t) => `<i style="flex:${t.valor};background:${t.cor}" title="${esc(t.tipo)}"></i>`).join('')}</div>
+          ${A.porTipo.map((t) => `<div class="trow"><span class="dot" style="background:${t.cor}"></span><span class="tn">${esc(t.tipo)}</span><span class="tp">${t.pct.toFixed(0)}%</span><b>${brl(t.valor)}</b></div>`).join('')}</div>`;
+      }
+
+      if (!A.items.length) return html + `<div class="card empty">Nenhum gasto ${P === 'dia' ? 'neste dia' : P === 'mes' ? 'neste mês' : 'neste ano'}${nFiltros ? ' com esses filtros' : ''}.<br><br><button class="btn" data-act="novoGasto">+ Lançar gasto</button></div>`;
+      if (P === 'ano') {
+        const max = Math.max(1, ...A.serie.map((p) => p.valor));
+        return html + `<h2 class="sec">Mês a mês</h2><div class="list">${A.serie.map((p, i) => (p.valor > 0 ? `<button class="item" data-act="mesG" data-d="${p.data}"><div class="day">${MES_CURTO[i]}<small>${g.data.slice(0, 4)}</small></div>
+          <div class="main"><b style="text-transform:capitalize">${MESES[i]}</b><div class="mbar"><i style="width:${Math.round((p.valor / max) * 100)}%"></i></div></div><div class="val">${brl(p.valor)}<small>${p.n} lançamento(s)</small></div></button>` : '')).join('')}</div>`;
+      }
+      const itens = A.items.slice().sort((x, y) => y.venc.localeCompare(x.venc) || (y.c.criadoEm || 0) - (x.c.criadoEm || 0));
+      if (P === 'dia') return html + `<h2 class="sec">Lançamentos</h2><div class="list">${itens.map(gItem).join('')}</div>`;
+      const dias = [...new Set(itens.map((i) => i.venc))];
+      return html + `<h2 class="sec">Lançamentos</h2>` + dias.map((d) => {
+        const doDia = itens.filter((i) => i.venc === d), tot = L.round2(doDia.reduce((s2, i) => s2 + i.valor, 0));
+        return `<div class="dayhead"><span>${diaSem(d)}, ${fmtData(d).slice(0, 5)}</span><b>${brl(tot)}</b></div><div class="list" style="margin-bottom:10px">${doDia.map(gItem).join('')}</div>`;
+      }).join('');
     },
 
     dividas() {
@@ -251,7 +318,7 @@
       <div class="card"><h2>💳 Cartão de crédito</h2>
         <div class="row2"><label class="field"><span>Dia em que a fatura fecha</span><input type="number" id="cartaoFecha" min="1" max="31" inputmode="numeric" value="${esc(state.cfg.cartaoFecha || '')}" placeholder="Ex.: 25"></label>
         <label class="field"><span>Dia do vencimento</span><input type="number" id="cartaoVenc" min="1" max="31" inputmode="numeric" value="${esc(state.cfg.cartaoVenc || '')}" placeholder="Ex.: 5"></label></div>
-        <p class="hint">Compras feitas depois do fechamento caem na fatura seguinte. Se deixar vazio, a 1ª parcela é contada 1 mês depois da compra.</p></div>
+        <p class="hint">Compras feitas depois do fechamento caem na fatura seguinte. Se deixar vazio, a 1ª parcela entra no mês da compra.</p></div>
       <div class="card"><h2>💾 Backup dos dados</h2><div class="btns">
         <button class="btn alt" data-act="expJSON">⬇️ Exportar backup (.json)</button>
         <button class="btn alt" data-act="impJSON">⬆️ Importar backup</button></div>
@@ -458,7 +525,7 @@
     $('#wrapParcela').hidden = n <= 1;
     const prim = fmtData(L.vencimentoParcela(f.data.value || hoje(), state.cfg, 0));
     let txt;
-    if (n <= 1) txt = `À vista no crédito · cai na fatura de <b>${prim}</b>`;
+    if (n <= 1) txt = `À vista no crédito · entra em <b>${prim}</b>`;
     else if (!(valor > 0)) txt = 'Informe o valor da compra para calcular o parcelamento.';
     else {
       const calc = L.calcParcelamento(valor, n, pv === '' ? 0 : num(pv));
@@ -466,7 +533,7 @@
       else if (calc.invalido) txt = `⚠️ ${n}x de ${brl(calc.parcela)} soma ${brl(calc.total)}, menos que o valor da compra.`;
       else if (calc.semJuros) txt = `Sem juros ✔ · total <b>${brl(calc.total)}</b>`;
       else txt = `Total a pagar: <b>${brl(calc.total)}</b><br>Juros: <b>${brl(calc.juros)}</b> (≈ ${n2(calc.taxa)}% ao mês)`;
-      txt += `<br>1ª parcela em <b>${prim}</b>`;
+      txt += `<br>1ª parcela em <b>${prim}</b> · as demais, nos meses seguintes`;
     }
     $('#boxJuros').innerHTML = txt;
   }
@@ -483,7 +550,7 @@
     if (erros.length) { $('#err').textContent = erros.join(' '); return; }
     await DB.put('compras', c);
     pedirPersistencia(); lsSet('pf-forma', forma);
-    if (state.tab === 'gastos' && state.visaoG === 'compras') state.ym = c.data.slice(0, 7);
+    if (state.tab === 'gastos') state.g.data = c.data;
     await reload(); closeSheet(); render();
     toast('Gasto salvo ✔', '➕ Outro', () => formCompra(null, forma));
   }
@@ -675,7 +742,22 @@
     mes: (t) => { state.ym = shiftYM(state.ym, +t.dataset.n); render(); },
     ano: (t) => { state.ano += +t.dataset.n; render(); },
     filtro: (t) => { state.filtro = t.dataset.v; render(); },
-    visaoG: (t) => { state.visaoG = t.dataset.v; render(); },
+    periodoG: (t) => { state.g.periodo = t.dataset.v; render(); },
+    navG: (t) => {
+      const g = state.g, n = +t.dataset.n;
+      g.data = g.periodo === 'dia' ? L.addDays(g.data, n) : L.addMonths(g.data, g.periodo === 'ano' ? 12 * n : n);
+      render();
+    },
+    diaG: (t) => { state.g.data = t.dataset.d; state.g.periodo = 'dia'; render(); window.scrollTo(0, 0); },
+    mesG: (t) => { state.g.data = t.dataset.d; state.g.periodo = 'mes'; render(); window.scrollTo(0, 0); },
+    filtroG: sheetFiltro,
+    limparFiltroG: () => { state.g.formas = []; state.g.tipos = []; closeSheet(); render(); },
+    rmF: (t) => { const k = t.dataset.k === 'forma' ? 'formas' : 'tipos'; state.g[k] = state.g[k].filter((x) => x !== t.dataset.v); render(); },
+    toggleG: (t) => {
+      const box = t.closest('.gitem'), k = box.dataset.k, abre = !state.gOpen.has(k);
+      if (abre) state.gOpen.add(k); else state.gOpen.delete(k);
+      box.classList.toggle('open', abre); t.setAttribute('aria-expanded', String(abre)); box.querySelector('.gdetail').hidden = !abre;
+    },
     novoGasto: () => formCompra(),
     compra: (t) => formCompra(t.dataset.id),
     forma: (t) => { const f = t.closest('form'); f.forma.value = t.dataset.v; syncCompra(); },
@@ -750,6 +832,10 @@
     if (e.target.id === 'fDivida') salvarDivida(e.target);
     if (e.target.id === 'fRenda') salvarRenda(e.target);
     if (e.target.id === 'fCompra') salvarCompra(e.target);
+    if (e.target.id === 'fFiltro') {
+      const fd = new FormData(e.target);
+      state.g.formas = fd.getAll('forma'); state.g.tipos = fd.getAll('tipo'); closeSheet(); render();
+    }
   });
   document.addEventListener('change', async (e) => {
     if (e.target.id === 'cartaoFecha' || e.target.id === 'cartaoVenc') {

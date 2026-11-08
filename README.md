@@ -37,7 +37,15 @@ Na aba **Gastos** (ou no botão **+**) lance cada compra na hora, escolhendo **C
 - **Crédito**: valor da compra à vista, número de parcelas (À vista, 2x até 10x), tipo de compra e data. Se for parcelado, informe o **valor da parcela** que o cartão cobra: o app calcula sozinho o total, o juros em R$ e a taxa mensal aproximada. Deixando a parcela em branco, o app considera parcelado sem juros.
 - A **data da compra** já vem como hoje, mas pode ser alterada se você esqueceu de lançar.
 - Em **Mais → Cartão de crédito**, informe o dia em que a fatura fecha e o dia do vencimento. Compras feitas depois do fechamento caem na fatura seguinte. Sem essa configuração, a 1ª parcela vence 1 mês depois da compra.
-- Aba **Gastos → Fatura do cartão** mostra as parcelas que vencem em cada mês. Débito e Pix entram no saldo na data da compra; o crédito entra parcela a parcela, no vencimento da fatura.
+- A 1ª parcela entra no **mês da compra** (ou na fatura configurada) e as demais nos meses seguintes. Em cada mês o app mostra o **valor da parcela**, nunca o total da compra; o total, o juros e as parcelas restantes ficam nos detalhes do lançamento.
+
+### Relatório da aba Gastos
+
+- **Dia, Mês ou Ano**: use o seletor no topo e as setas para navegar.
+- **Filtro** (botão de funil): escolha forma de pagamento (Crédito, Débito, Pix) e/ou tipos de compra. Os filtros ativos aparecem como etiquetas que podem ser removidas com um toque.
+- **Gráfico de gastos por dia** (por mês, quando o período é Ano). Toque em uma barra para abrir aquele dia.
+- **Onde mais gastei**: cada tipo de compra tem uma cor própria, com percentual e valor.
+- Toque em um lançamento para expandir os detalhes (data da compra, forma, valor da compra, parcelamento, juros, parcelas restantes) e editar ou excluir.
 
 ## Regras de cálculo
 

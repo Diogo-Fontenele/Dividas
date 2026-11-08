@@ -210,11 +210,11 @@
   const jurosCompra = (c) => (c.forma === 'credito' ? calcParcelamento(c.valor, c.parcelas, c.valorParcela).juros : 0);
 
   // 1ª fatura em que a compra cai. Com fechamento/vencimento configurados (Mais > Cartão), respeita o fechamento;
-  // sem configuração, a 1ª parcela vence 1 mês depois da compra.
+  // sem configuração, a 1ª parcela entra no mês da compra e as demais nos meses seguintes.
   function primeiroVenc(data, cfg) {
     const F = parseInt(cfg && cfg.cartaoFecha, 10), V = parseInt(cfg && cfg.cartaoVenc, 10);
     const dia = +data.slice(8, 10), ymC = data.slice(0, 7);
-    if (!(F >= 1 && F <= 31 && V >= 1 && V <= 31)) return { ym: shiftYm(ymC, 1), dia };
+    if (!(F >= 1 && F <= 31 && V >= 1 && V <= 31)) return { ym: ymC, dia };
     const ymF = dia > F ? shiftYm(ymC, 1) : ymC;
     return { ym: V > F ? ymF : shiftYm(ymF, 1), dia: V };
   }
@@ -252,6 +252,82 @@
       else if (n > 1 && Number(c.valorParcela) > 0 && calcParcelamento(c.valor, n, c.valorParcela).invalido) e.push('A soma das parcelas é menor que o valor da compra. Confira o valor da parcela.');
     }
     return e;
+  }
+
+  // ---------- Relatório de gastos: dia / mês / ano, com filtros ----------
+  const COR_TIPO = {
+    'Mercado': '#8b5cf6', 'Restaurante / Delivery': '#e879f9', 'Combustível': '#3b82f6', 'Farmácia': '#22d3ee', 'Saúde': '#a5b4fc',
+    'Transporte': '#60a5fa', 'Lazer': '#c084fc', 'Roupas': '#f0abfc', 'Casa': '#6366f1', 'Eletrônicos': '#38bdf8',
+    'Educação': '#7c3aed', 'Presente': '#d8b4fe', 'Assinaturas': '#2563eb', 'Outros': '#94a3b8',
+  };
+  const COR_EXTRA = ['#818cf8', '#a78bfa', '#60a5fa', '#c084fc', '#38bdf8', '#e879f9'];
+  function corTipo(tipo) {
+    if (COR_TIPO[tipo]) return COR_TIPO[tipo];
+    let h = 0;
+    for (const ch of String(tipo)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return COR_EXTRA[h % COR_EXTRA.length];
+  }
+  function tiposUsados(compras) {
+    const usados = new Set((compras || []).map((c) => c.tipo).filter(Boolean));
+    if (!usados.size) return TIPOS_COMPRA.slice();
+    return [...TIPOS_COMPRA.filter((t) => usados.has(t)), ...[...usados].filter((t) => !TIPOS_COMPRA.includes(t)).sort()];
+  }
+  const diasNoMes = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(y, m, 0).getDate(); };
+  function intervalo(periodo, data) {
+    if (periodo === 'dia') return { ini: data, fim: data };
+    if (periodo === 'ano') return { ini: data.slice(0, 4) + '-01-01', fim: data.slice(0, 4) + '-12-31' };
+    return { ini: data.slice(0, 7) + '-01', fim: data.slice(0, 7) + '-31' };
+  }
+  const dataAnterior = (periodo, data) => (periodo === 'dia' ? addDays(data, -1) : addMonths(data, periodo === 'ano' ? -12 : -1));
+  function filtrarItens(itens, f) {
+    const formas = (f && f.formas) || [], tipos = (f && f.tipos) || [];
+    return itens.filter((i) => (!formas.length || formas.includes(i.forma)) && (!tipos.length || tipos.includes(i.c.tipo)));
+  }
+
+  // Cada item é a PARCELA do mês (crédito parcelado) ou o valor do gasto (débito, Pix, crédito à vista).
+  function analiseGastos(compras, cfg, filtro, hoje) {
+    const f = Object.assign({ periodo: 'mes', data: hoje, formas: [], tipos: [] }, filtro);
+    const todos = filtrarItens(itensGastos(compras, cfg), f);
+    const soma = (arr) => round2(arr.reduce((s, i) => s + i.valor, 0));
+    const noInt = (i, r) => i.venc >= r.ini && i.venc <= r.fim;
+    const r = intervalo(f.periodo, f.data);
+    const items = todos.filter((i) => noInt(i, r));
+    const total = soma(items);
+    const porForma = { credito: 0, debito: 0, pix: 0 };
+    const mapT = {};
+    items.forEach((i) => {
+      porForma[i.forma] = round2((porForma[i.forma] || 0) + i.valor);
+      mapT[i.c.tipo] = round2((mapT[i.c.tipo] || 0) + i.valor);
+    });
+    const porTipo = Object.entries(mapT).sort((a, b) => b[1] - a[1])
+      .map(([tipo, valor]) => ({ tipo, valor, pct: total > 0 ? Math.round((valor / total) * 1000) / 10 : 0, cor: corTipo(tipo) }));
+    const serie = [];
+    if (f.periodo === 'ano') {
+      const y = f.data.slice(0, 4);
+      for (let m = 1; m <= 12; m++) {
+        const ym = `${y}-${pad(m)}`, doMes = todos.filter((i) => i.venc.startsWith(ym));
+        serie.push({ data: ym + '-01', ym, valor: soma(doMes), n: doMes.length });
+      }
+    } else {
+      const ym = f.data.slice(0, 7), mapD = {}, cnt = {};
+      todos.filter((i) => i.venc.startsWith(ym)).forEach((i) => { mapD[i.venc] = round2((mapD[i.venc] || 0) + i.valor); cnt[i.venc] = (cnt[i.venc] || 0) + 1; });
+      for (let d = 1; d <= diasNoMes(ym); d++) { const data = `${ym}-${pad(d)}`; serie.push({ data, valor: mapD[data] || 0, n: cnt[data] || 0 }); }
+    }
+    const maior = serie.reduce((b, p) => (p.valor > (b ? b.valor : 0) ? p : b), null);
+    let media = null, mediaRotulo = '';
+    if (f.periodo === 'mes') {
+      const ym = f.data.slice(0, 7), nd = diasNoMes(ym);
+      const atual = hoje.slice(0, 7) === ym, dias = atual ? +hoje.slice(8, 10) : nd;
+      media = round2((atual ? soma(items.filter((i) => i.venc <= hoje)) : total) / Math.max(1, dias)); mediaRotulo = 'Média por dia';
+    } else if (f.periodo === 'ano') {
+      const y = f.data.slice(0, 4), atual = hoje.slice(0, 4) === y, meses = atual ? +hoje.slice(5, 7) : 12;
+      media = round2((atual ? soma(items.filter((i) => i.venc <= hoje)) : total) / Math.max(1, meses)); mediaRotulo = 'Média por mês';
+    }
+    const totalAnt = soma(todos.filter((i) => noInt(i, intervalo(f.periodo, dataAnterior(f.periodo, f.data)))));
+    return {
+      periodo: f.periodo, data: f.data, intervalo: r, items, total, qtd: items.length, porForma, porTipo, serie, maior, media, mediaRotulo,
+      totalAnt, delta: round2(total - totalAnt), deltaPct: totalAnt > 0 ? Math.round(((total - totalAnt) / totalAnt) * 1000) / 10 : null,
+    };
   }
 
   function resumoAno(dividas, rendas, ano, hoje, compras, cfg) {
@@ -349,7 +425,7 @@
   }
 
   return { TIPOS, TIPOS_RENDA, TIPOS_EMPRESTIMO, isEmprestimo, variavelRec, pad, round2, toISO, parseISO, todayISO, addMonths, addDays, daysBetween,
-    FORMAS, TIPOS_COMPRA, calcParcelamento, jurosCompra, vencimentoParcela, itensCompra, itensGastos, validarCompra,
+    FORMAS, TIPOS_COMPRA, corTipo, tiposUsados, diasNoMes, filtrarItens, analiseGastos, calcParcelamento, jurosCompra, vencimentoParcela, itensCompra, itensGastos, validarCompra,
     valorMes, aplicarReajuste, definirValorMes, acrescimoDe, encargos, ocorrencias, detalhe, occsDividas, occsRendas, resumoMes, resumoAno,
     atrasadas, vencendoHoje, proximos, infoEmprestimo, gerarICS, validarDivida, brl };
 });
