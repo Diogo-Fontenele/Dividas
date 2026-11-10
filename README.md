@@ -34,7 +34,7 @@ Apps web não conseguem agendar alarmes exatos sozinhos no Android — por isso 
 Na aba **Gastos** (ou no botão **+**) lance cada compra na hora, escolhendo **Crédito, Débito ou Pix**:
 
 - **Débito e Pix**: valor, tipo de compra e data.
-- **Crédito**: valor da compra à vista, número de parcelas (À vista, 2x até 10x), tipo de compra e data. Se for parcelado, informe o **valor da parcela** que o cartão cobra: o app calcula sozinho o total, o juros em R$ e a taxa mensal aproximada. Deixando a parcela em branco, o app considera parcelado sem juros.
+- **Crédito**: valor da compra à vista, número de parcelas (À vista, 2x até 10x), tipo de compra e data. Se for parcelado, informe o **valor da parcela** que o cartão cobra: o app não calcula juros. Se quiser registrar o juros cobrado, digite-o no campo **Juros cobrados no parcelamento** (opcional). Deixando a parcela em branco, o app considera parcelado sem juros.
 - A **data da compra** já vem como hoje, mas pode ser alterada se você esqueceu de lançar.
 - Em **Mais → Cartão de crédito**, informe o dia em que a fatura fecha e o dia do vencimento. Compras feitas depois do fechamento caem na fatura seguinte. Sem essa configuração, a 1ª parcela vence 1 mês depois da compra.
 - A 1ª parcela entra no **mês da compra** (ou na fatura configurada) e as demais nos meses seguintes. Em cada mês o app mostra o **valor da parcela**, nunca o total da compra; o total, o juros e as parcelas restantes ficam nos detalhes do lançamento.

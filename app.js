@@ -135,8 +135,8 @@
       const calc = L.calcParcelamento(c.valor, c.parcelas, c.valorParcela);
       if (calc.n > 1) {
         const rest = L.itensCompra(c, state.cfg).filter((x) => x.n > i.n);
-        rows.push(['Parcelamento', `${calc.n}x de ${brl(calc.parcela)}`], ['Total com juros', brl(calc.total)],
-          ['Juros', calc.juros > 0 ? `${brl(calc.juros)} (≈ ${n2(calc.taxa)}% ao mês)` : 'Sem juros'],
+        rows.push(['Parcelamento', `${calc.n}x de ${brl(calc.parcela)}`],
+          ['Juros informados', c.jurosManual > 0 ? brl(c.jurosManual) : 'Não informado'],
           ['Esta parcela', `${i.n} de ${i.de} · ${fmtData(i.venc)}`],
           ['Parcelas restantes', rest.length ? `${rest.length} (${brl(L.round2(rest.reduce((s2, x) => s2 + x.valor, 0)))})` : 'Nenhuma, é a última']);
       } else rows.push(['Vencimento', fmtData(i.venc)]);
@@ -171,21 +171,29 @@
       const atras = L.atrasadas(state.dividas, h), hojeL = L.vencendoHoje(state.dividas, h);
       const prox = L.proximos(state.dividas, h, 30).filter((o) => o.venc > h).slice(0, 6);
       const hojeC = state.compras.filter((c) => c.data === h);
-      const totHoje = L.round2(hojeC.reduce((s2, c) => s2 + (Number(c.valor) || 0), 0));
+      const totHoje = L.round2(r.itensGastos.filter((i) => i.c.data === h).reduce((s2, i) => s2 + i.valor, 0));
       let html = '';
       if (hojeL.length) html += `<div class="banner amber">⏰ <div><b>Vence hoje:</b> ${hojeL.map((o) => esc(o.d.nome) + ' (' + brl(o.total) + ')').join(', ')}</div></div>`;
-      if (atras.length) html += `<div class="banner red">⚠️ <div><b>${atras.length} em atraso</b> · ${brl(atras.reduce((s2, o) => s2 + o.total, 0))} com juros. Veja na aba Dívidas.</div></div>`;
+      if (atras.length) html += `<div class="banner red">⚠️ <div><b>${atras.length} em atraso</b> · ${brl(atras.reduce((s2, o) => s2 + o.total, 0))} em atraso. Veja na aba Dívidas.</div></div>`;
       html += monthNav(labelYM(state.ym), 'mes');
       if (!state.dividas.length && !state.rendas.length && !state.compras.length) {
         return html + `<div class="card empty">Comece lançando seus <b>gastos</b>, <b>dívidas</b> e <b>receitas</b>.<br><br><div class="btns"><button class="btn" data-act="novoGasto">Lançar um gasto</button><button class="btn alt" data-act="novaDivida">Cadastrar uma dívida</button></div></div>`;
       }
-      html += `<div class="saldo ${r.saldo >= 0 ? 'pos' : 'neg'}"><small>Saldo de ${esc(MESES[+state.ym.slice(5, 7) - 1])}</small><b>${brl(r.saldo)}</b><small>${r.saldo >= 0 ? '● Mês no azul' : '● Mês no vermelho, atenção'} · receitas − contas − gastos</small></div>`;
+      const gp = r.gastosPorForma;
+      const atrasOM = r.occs.filter((o) => o.status === 'atrasado');
+      const faltOM = r.occs.filter((o) => o.status === 'aberto' || o.status === 'hoje');
+      const saldoAtual = L.round2(r.receitas - r.pago - gp.pix - gp.debito);
+      const saldoProj = L.round2(saldoAtual - gp.credito);
       if (r.estimados) html += `<div class="banner blue">ℹ️ <div>${r.estimados} lançamento(s) deste mês com <b>valor variável ainda não informado</b> (estimado ou zerado). Toque neles para informar o valor real.</div></div>`;
-      html += `<div class="grid3"><div class="stat"><small>Receitas</small><b class="pos-t">${brl(r.receitas)}</b></div>
-        <div class="stat"><small>Contas</small><b class="neg-t">${brl(r.dividas)}</b></div>
-        <div class="stat"><small>Gastos</small><b class="violet-t">${brl(r.gastos)}</b></div></div>
-        <p class="hint" style="margin:-4px 2px 12px">Gastos = débito, Pix e as parcelas do cartão deste mês.</p>`;
-      html += `<div class="card quick"><div><h2>Compras de hoje</h2><b>${brl(totHoje)}</b><span class="sub">${hojeC.length ? hojeC.length + ' compra(s) lançada(s)' : 'Nenhuma compra lançada hoje'}</span></div><button class="btn mini" data-act="novoGasto">+ Lançar gasto</button></div>`;
+      html += `<div class="panels">
+        <div class="stat"><small>Receitas</small><b class="pos-t">${brl(r.receitas)}</b><span class="sub">${r.recs.length} lançamento(s)</span></div>
+        <div class="stat"><small>Gastos</small><b class="violet-t">${brl(r.gastos)}</b><span class="sub">Crédito ${brl(gp.credito)} · Débito ${brl(gp.debito)} · Pix ${brl(gp.pix)}</span></div>
+        <div class="stat"><small>Dívidas vencidas</small><b class="neg-t">${brl(r.atrasado)}</b><span class="sub">${atrasOM.length} em atraso neste mês</span></div>
+        <div class="stat"><small>Dívidas faltantes</small><b>${brl(r.aberto)}</b><span class="sub">${faltOM.length} conta(s) a pagar neste mês</span></div></div>
+        <div class="panels">
+        <div class="stat ${saldoAtual >= 0 ? 'pos' : 'neg'}"><small>Saldo atual</small><b>${brl(saldoAtual)}</b><span class="sub">receita − dívidas pagas − Pix e débito</span></div>
+        <div class="stat ${saldoProj >= 0 ? 'pos' : 'neg'}"><small>Saldo projetado</small><b>${brl(saldoProj)}</b><span class="sub">saldo atual − cartão de crédito</span></div></div>`;
+      html += `<div class="card quick"><div><h2>Compras de hoje</h2><b>${brl(totHoje)}</b><span class="sub">${hojeC.length ? hojeC.length + ' compra(s) · só a parcela deste mês' : 'Nenhuma compra lançada hoje'}</span></div><button class="btn mini" data-act="novoGasto">+ Lançar gasto</button></div>`;
       const pct = r.qtd ? Math.round((r.qtdPagas / r.qtd) * 100) : 0;
       html += `<div class="card"><h2>Contas pagas no mês</h2><b>${r.qtdPagas} de ${r.qtd}</b> · falta pagar ${brl(r.aberto + r.atrasado)}<div class="progress"><i style="width:${pct}%"></i></div></div>`;
       html += `<h2 style="font-size:13px;color:var(--muted);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.04em">Próximos vencimentos (30 dias)</h2>`;
@@ -375,8 +383,8 @@
           </div>
           <div class="box" id="boxRest"></div>
         </div>
-        <label class="field"><span>Juros se pagar em atraso (R$)</span><input type="number" name="acrescimoAtraso" step="0.01" min="0" inputmode="decimal" value="${esc(acr)}" placeholder="Ex.: 15,00"></label>
-        <p class="hint">Quanto você pagará de juros caso pague depois do vencimento (valor fixo em reais). Deixe vazio se não houver.</p>
+        <label class="field"><span>Juros de atraso sugerido (R$)</span><input type="number" name="acrescimoAtraso" step="0.01" min="0" inputmode="decimal" value="${esc(acr)}" placeholder="Ex.: 15,00"></label>
+        <p class="hint">Sugestão para quando a conta atrasar. Não é somada sozinha: ao marcar como pago com atraso, você digita o juros cobrado.</p>
         <div class="err" id="err"></div>
         <button class="btn" type="submit">Salvar dívida</button>
       </form>
@@ -499,6 +507,7 @@
         <div id="blocoCred">
           <label class="field"><span>Número de parcelas</span><select name="parcelas">${parcs}</select></label>
           <label class="field" id="wrapParcela"><span>Valor de cada parcela (R$)</span><input type="number" name="valorParcela" step="0.01" min="0" inputmode="decimal" placeholder="Valor que o cartão cobra por parcela" value="${esc(v.valorParcela || '')}"></label>
+          <label class="field"><span>Juros cobrados no parcelamento (R$, opcional)</span><input type="number" name="jurosManual" step="0.01" min="0" inputmode="decimal" placeholder="Digite o juros, se houver" value="${esc(v.jurosManual || '')}"></label>
           <div class="box" id="boxJuros"></div>
         </div>
         <label class="field"><span>Tipo de compra</span><select name="tipo">${tipos}</select></label>
@@ -521,21 +530,12 @@
     $('#wrapCustomC').hidden = f.tipo.value !== '__custom';
     $('#lblValorC').textContent = cred ? 'Valor da compra à vista (R$)' : 'Valor (R$)';
     if (!cred) return;
-    const n = +f.parcelas.value || 1, valor = num(f.valor.value), pv = f.valorParcela.value;
+    const n = +f.parcelas.value || 1;
     $('#wrapParcela').hidden = n <= 1;
     const prim = fmtData(L.vencimentoParcela(f.data.value || hoje(), state.cfg, 0));
-    let txt;
-    if (n <= 1) txt = `À vista no crédito · entra em <b>${prim}</b>`;
-    else if (!(valor > 0)) txt = 'Informe o valor da compra para calcular o parcelamento.';
-    else {
-      const calc = L.calcParcelamento(valor, n, pv === '' ? 0 : num(pv));
-      if (pv === '') txt = `Sem informar a parcela, considero <b>sem juros</b>: ${n}x de <b>${brl(calc.parcela)}</b>.`;
-      else if (calc.invalido) txt = `⚠️ ${n}x de ${brl(calc.parcela)} soma ${brl(calc.total)}, menos que o valor da compra.`;
-      else if (calc.semJuros) txt = `Sem juros ✔ · total <b>${brl(calc.total)}</b>`;
-      else txt = `Total a pagar: <b>${brl(calc.total)}</b><br>Juros: <b>${brl(calc.juros)}</b> (≈ ${n2(calc.taxa)}% ao mês)`;
-      txt += `<br>1ª parcela em <b>${prim}</b> · as demais, nos meses seguintes`;
-    }
-    $('#boxJuros').innerHTML = txt;
+    $('#boxJuros').innerHTML = n <= 1
+      ? `À vista no crédito · entra em <b>${prim}</b>`
+      : `Cada parcela entra no custo do mês em que vencer. 1ª parcela em <b>${prim}</b> · as demais, nos meses seguintes.`;
   }
 
   async function salvarCompra(f) {
@@ -545,7 +545,8 @@
     const cred = forma === 'credito', n = cred ? +f.parcelas.value || 1 : 1;
     const c = Object.assign(old ? {} : { id: uid(), criadoEm: Date.now() }, old || {}, {
       forma, valor: num(f.valor.value), tipo: tipo || 'Outros', descricao: f.descricao.value.trim(), data: f.data.value,
-      parcelas: n, valorParcela: cred && n > 1 && f.valorParcela.value !== '' ? num(f.valorParcela.value) : 0 });
+      parcelas: n, valorParcela: cred && n > 1 && f.valorParcela.value !== '' ? num(f.valorParcela.value) : 0,
+      jurosManual: cred && f.jurosManual && f.jurosManual.value !== '' ? num(f.jurosManual.value) : 0 });
     const erros = L.validarCompra(c);
     if (erros.length) { $('#err').textContent = erros.join(' '); return; }
     await DB.put('compras', c);
@@ -583,7 +584,8 @@
       corpo = `${info}${valorSec}<div class="box" style="background:var(--green-soft);color:var(--green)">✅ Pago em <b>${fmtData(o.pagoEm)}</b>${o.pagoComAtraso ? `<br>Com ${o.enc.dias} dia(s) de atraso: juros de ${brl(o.enc.juros)} · total <b>${brl(o.total)}</b>` : ''}</div>`;
       botoes = `<button class="btn alt" data-act="desfazer">Desfazer pagamento</button>`;
     } else {
-      corpo = `${info}${valorSec}<label class="field"><span>Data do pagamento</span><input type="date" id="payDate" value="${hoje()}"></label><div class="box" id="boxEnc"></div>`;
+      const acrSug = L.acrescimoDe(d);
+      corpo = `${info}${valorSec}<label class="field"><span>Data do pagamento</span><input type="date" id="payDate" value="${hoje()}"></label><label class="field" id="wrapJuros" hidden><span>Juros cobrados por atraso (R$)</span><input type="number" id="jurosPago" step="0.01" min="0" inputmode="decimal" value="" placeholder="${acrSug ? 'Ex.: ' + n2(acrSug) : '0,00'}"></label><div class="box" id="boxEnc"></div>`;
       botoes = `<button class="btn" data-act="pagar">✔ Marcar como pago</button><button class="btn alt" data-act="calOcc">📅 Adicionar ao calendário</button>`;
     }
     openSheet(`<h3>${esc(d.nome)}</h3>${corpo}<div class="btns">${botoes}<button class="btn alt" data-act="editDivida" data-id="${esc(d.id)}">✏️ Editar dívida</button><button class="btn alt" data-act="fechar">Fechar</button></div>`);
@@ -594,10 +596,12 @@
 
   function atualizarEnc() {
     const f = cur && findOcc(cur.id, cur.key); const inp = $('#payDate'); if (!f || !inp || !inp.value) return;
-    const e = L.encargos(f.o.venc, inp.value, L.acrescimoDe(f.d));
+    const jIn = $('#jurosPago'), jTyped = jIn && jIn.value !== '' ? num(jIn.value) : 0;
+    const e = L.encargos(f.o.venc, inp.value, jTyped);
     const val = valorOccAtual(f);
     const faltaValor = f.o.estimado && $('#valorOcc') && $('#valorOcc').value === '';
-    const atraso = e.dias ? `⚠️ <b>${e.dias} dia(s) de atraso</b>: juros de ${brl(e.juros)}` : '';
+    const atraso = e.dias ? `⚠️ <b>${e.dias} dia(s) de atraso</b>${jTyped ? ': juros de ' + brl(e.juros) : ' · informe os juros cobrados, se houver'}` : '';
+    if ($('#wrapJuros')) $('#wrapJuros').hidden = !e.dias;
     $('#boxEnc').innerHTML = faltaValor ? `${atraso ? atraso + '<br>' : ''}Informe o valor da conta acima para ver o total.`
       : e.dias ? `${atraso}<br>Total a pagar: <b>${brl(val + e.total)}</b>` : `Pagamento em dia ✔ — total <b>${brl(val)}</b>`;
   }
@@ -625,7 +629,10 @@
     const f = findOcc(cur.id, cur.key); if (!f) return;
     if ($('#valorOcc') && f.o.estimado && $('#valorOcc').value === '') { toast('Informe o valor desta conta antes de pagar.'); return; }
     const r = aplicarValorOcc(f);
-    const d = Object.assign({}, r.d, { pagamentos: Object.assign({}, r.d.pagamentos, { [cur.key]: dt }) });
+    const jIn = $('#jurosPago'), jv = jIn && jIn.value !== '' ? num(jIn.value) : 0;
+    const jp = Object.assign({}, r.d.jurosPagos || {});
+    if (jv > 0) jp[cur.key] = jv; else delete jp[cur.key];
+    const d = Object.assign({}, r.d, { pagamentos: Object.assign({}, r.d.pagamentos, { [cur.key]: dt }), jurosPagos: jp });
     await DB.put('dividas', d); await reload(); closeSheet(); render();
     toast('Pagamento registrado ✔');
   }
@@ -633,6 +640,7 @@
     const f = findOcc(cur.id, cur.key); if (!f) return;
     const d = Object.assign({}, f.d, { pagamentos: Object.assign({}, f.d.pagamentos) });
     if (data) d.pagamentos[cur.key] = data; else delete d.pagamentos[cur.key];
+    if (!data && d.jurosPagos) { d.jurosPagos = Object.assign({}, d.jurosPagos); delete d.jurosPagos[cur.key]; }
     await DB.put('dividas', d); await reload(); closeSheet(); render();
     toast(data ? 'Pagamento registrado ✔' : 'Pagamento desfeito');
   }
@@ -811,7 +819,7 @@
   sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
 
   $('#sheetBody').addEventListener('input', (e) => {
-    if (e.target.id === 'payDate' || e.target.id === 'valorOcc') return atualizarEnc();
+    if (e.target.id === 'payDate' || e.target.id === 'valorOcc' || e.target.id === 'jurosPago') return atualizarEnc();
     if (e.target.form && e.target.form.id === 'fDivida') syncForm();
     if (e.target.form && e.target.form.id === 'fRenda') syncRenda();
     if (e.target.form && e.target.form.id === 'fCompra') syncCompra();

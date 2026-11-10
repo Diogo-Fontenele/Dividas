@@ -81,6 +81,7 @@
     const base = isEmprestimo(d) ? d.valorParcela : d.valor;
     return round2((Number(base) || 0) * ((Number(d.multaAtraso) || 0) + (Number(d.jurosAtraso) || 0)) / 100);
   }
+  function jurosPagoDe(d, key) { return round2(Number((d.jurosPagos || {})[key]) || 0); }
   function encargos(venc, ref, acrescimo) {
     const dias = Math.max(0, daysBetween(venc, ref));
     if (!dias) return { dias: 0, multa: 0, juros: 0, total: 0 };
@@ -119,7 +120,8 @@
   }
 
   function detalhe(o, d, hoje) {
-    const enc = encargos(o.venc, o.pagoEm || hoje, acrescimoDe(d));
+    // Juros de atraso só entram quando o usuário digita o valor pago (jurosPagos); nada é somado sozinho.
+    const enc = encargos(o.venc, o.pagoEm || hoje, o.pagoEm ? jurosPagoDe(d, o.key) : 0);
     let status = 'aberto';
     if (o.pagoEm) status = 'pago';
     else if (o.venc < hoje) status = 'atrasado';
@@ -207,7 +209,8 @@
     if (total <= valor + tol) return { n, parcela: p, total: valor, juros: 0, taxa: 0, semJuros: true, invalido: false, informada: true };
     return { n, parcela: p, total, juros: round2(total - valor), taxa: round2(taxaMensal(valor, n, p) * 100), semJuros: false, invalido: false, informada: true };
   }
-  const jurosCompra = (c) => (c.forma === 'credito' ? calcParcelamento(c.valor, c.parcelas, c.valorParcela).juros : 0);
+  // Juros só entram se forem digitados pelo usuário; nada é calculado automaticamente.
+  const jurosCompra = (c) => (c.forma === 'credito' ? round2(Number(c.jurosManual) || 0) : 0);
 
   // 1ª fatura em que a compra cai. Com fechamento/vencimento configurados (Mais > Cartão), respeita o fechamento;
   // sem configuração, a 1ª parcela entra no mês da compra e as demais nos meses seguintes.
@@ -426,6 +429,6 @@
 
   return { TIPOS, TIPOS_RENDA, TIPOS_EMPRESTIMO, isEmprestimo, variavelRec, pad, round2, toISO, parseISO, todayISO, addMonths, addDays, daysBetween,
     FORMAS, TIPOS_COMPRA, corTipo, tiposUsados, diasNoMes, filtrarItens, analiseGastos, calcParcelamento, jurosCompra, vencimentoParcela, itensCompra, itensGastos, validarCompra,
-    valorMes, aplicarReajuste, definirValorMes, acrescimoDe, encargos, ocorrencias, detalhe, occsDividas, occsRendas, resumoMes, resumoAno,
+    valorMes, aplicarReajuste, definirValorMes, acrescimoDe, jurosPagoDe, encargos, ocorrencias, detalhe, occsDividas, occsRendas, resumoMes, resumoAno,
     atrasadas, vencendoHoje, proximos, infoEmprestimo, gerarICS, validarDivida, brl };
 });

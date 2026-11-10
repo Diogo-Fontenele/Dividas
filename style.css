@@ -46,6 +46,8 @@ main { padding: 6px 16px 24px; max-width: 680px; margin: 0 auto; }
 .stat small { color: var(--muted); display: block; font-size: 12px; }
 .stat b { font-size: 15px; display: block; margin-top: 3px; word-break: break-word; }
 .violet-t { color: var(--c-gas); }
+.panels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.stat.pos b { color: var(--green); } .stat.neg b { color: var(--red); }
 
 .saldo { position: relative; overflow: hidden; text-align: left; padding: 20px 18px; border-radius: 24px; margin-bottom: 12px; color: #fff; background: var(--grad); box-shadow: 0 20px 44px -20px rgba(79, 70, 229, .9); border: 1px solid rgba(255, 255, 255, .14); }
 .saldo::after { content: ''; position: absolute; right: -50px; top: -70px; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 255, 255, .26), transparent 66%); pointer-events: none; }
