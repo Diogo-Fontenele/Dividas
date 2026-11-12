@@ -169,35 +169,44 @@
       const h = hoje();
       const r = L.resumoMes(state.dividas, state.rendas, state.ym, h, state.compras, state.cfg);
       const atras = L.atrasadas(state.dividas, h), hojeL = L.vencendoHoje(state.dividas, h);
-      const prox = L.proximos(state.dividas, h, 30).filter((o) => o.venc > h).slice(0, 6);
-      const hojeC = state.compras.filter((c) => c.data === h);
-      const totHoje = L.round2(r.itensGastos.filter((i) => i.c.data === h).reduce((s2, i) => s2 + i.valor, 0));
       let html = '';
       if (hojeL.length) html += `<div class="banner amber">⏰ <div><b>Vence hoje:</b> ${hojeL.map((o) => esc(o.d.nome) + ' (' + brl(o.total) + ')').join(', ')}</div></div>`;
-      if (atras.length) html += `<div class="banner red">⚠️ <div><b>${atras.length} em atraso</b> · ${brl(atras.reduce((s2, o) => s2 + o.total, 0))} em atraso. Veja na aba Dívidas.</div></div>`;
+      if (atras.length) html += `<div class="banner red">⚠️ <div><b>${atras.length} em atraso</b> · ${brl(atras.reduce((s2, o) => s2 + o.total, 0))}. Veja na aba Dívidas.</div></div>`;
       html += monthNav(labelYM(state.ym), 'mes');
       if (!state.dividas.length && !state.rendas.length && !state.compras.length) {
         return html + `<div class="card empty">Comece lançando seus <b>gastos</b>, <b>dívidas</b> e <b>receitas</b>.<br><br><div class="btns"><button class="btn" data-act="novoGasto">Lançar um gasto</button><button class="btn alt" data-act="novaDivida">Cadastrar uma dívida</button></div></div>`;
       }
+      const [yy, mm] = state.ym.split('-').map(Number);
+      const ymAnt = mm === 1 ? `${yy - 1}-12` : `${yy}-${String(mm - 1).padStart(2, '0')}`;
+      const ant = L.resumoMes(state.dividas, state.rendas, ymAnt, h, state.compras, state.cfg);
       const gp = r.gastosPorForma;
-      const atrasOM = r.occs.filter((o) => o.status === 'atrasado');
-      const faltOM = r.occs.filter((o) => o.status === 'aberto' || o.status === 'hoje');
+      // Gastos = Pix + débito + contas pagas (bate com o extrato do banco). Cartão entra só no saldo projetado.
+      const gastosTile = L.round2(gp.pix + gp.debito + r.pago);
+      const gastosTileAnt = L.round2(ant.gastosPorForma.pix + ant.gastosPorForma.debito + ant.pago);
       const saldoAtual = L.round2(r.receitas - r.pago - gp.pix - gp.debito);
       const saldoProj = L.round2(saldoAtual - gp.credito);
-      if (r.estimados) html += `<div class="banner blue">ℹ️ <div>${r.estimados} lançamento(s) deste mês com <b>valor variável ainda não informado</b> (estimado ou zerado). Toque neles para informar o valor real.</div></div>`;
-      html += `<div class="panels">
-        <div class="stat"><small>Receitas</small><b class="pos-t">${brl(r.receitas)}</b><span class="sub">${r.recs.length} lançamento(s)</span></div>
-        <div class="stat"><small>Gastos</small><b class="violet-t">${brl(r.gastos)}</b><span class="sub">Crédito ${brl(gp.credito)} · Débito ${brl(gp.debito)} · Pix ${brl(gp.pix)}</span></div>
-        <div class="stat"><small>Dívidas vencidas</small><b class="neg-t">${brl(r.atrasado)}</b><span class="sub">${atrasOM.length} em atraso neste mês</span></div>
-        <div class="stat"><small>Dívidas faltantes</small><b>${brl(r.aberto)}</b><span class="sub">${faltOM.length} conta(s) a pagar neste mês</span></div></div>
-        <div class="panels">
-        <div class="stat ${saldoAtual >= 0 ? 'pos' : 'neg'}"><small>Saldo atual</small><b>${brl(saldoAtual)}</b><span class="sub">receita − dívidas pagas − Pix e débito</span></div>
-        <div class="stat ${saldoProj >= 0 ? 'pos' : 'neg'}"><small>Saldo projetado</small><b>${brl(saldoProj)}</b><span class="sub">saldo atual − cartão de crédito</span></div></div>`;
-      html += `<div class="card quick"><div><h2>Compras de hoje</h2><b>${brl(totHoje)}</b><span class="sub">${hojeC.length ? hojeC.length + ' compra(s) · só a parcela deste mês' : 'Nenhuma compra lançada hoje'}</span></div><button class="btn mini" data-act="novoGasto">+ Lançar gasto</button></div>`;
-      const pct = r.qtd ? Math.round((r.qtdPagas / r.qtd) * 100) : 0;
-      html += `<div class="card"><h2>Contas pagas no mês</h2><b>${r.qtdPagas} de ${r.qtd}</b> · falta pagar ${brl(r.aberto + r.atrasado)}<div class="progress"><i style="width:${pct}%"></i></div></div>`;
-      html += `<h2 style="font-size:13px;color:var(--muted);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.04em">Próximos vencimentos (30 dias)</h2>`;
-      html += prox.length ? `<div class="list">${prox.map(itemOcc).join('')}</div>` : `<div class="card empty">Nada a vencer nos próximos 30 dias 🎉</div>`;
+      const vsAnt = (a, b) => (b > 0 ? `${a >= b ? '▲' : '▼'} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs mês anterior` : 'sem dados do mês anterior');
+      const pctGastos = r.receitas > 0 ? Math.min(100, Math.round((gastosTile / r.receitas) * 100)) : 0;
+      const pctContas = r.qtd ? Math.round((r.qtdPagas / r.qtd) * 100) : 0;
+      const ordem = { atrasado: 0, hoje: 1, aberto: 2, pago: 3 };
+      const occs = r.occs.slice().sort((x, y) => (ordem[x.status] - ordem[y.status]) || x.venc.localeCompare(y.venc));
+      const chip = (s) => ({ atrasado: '<span class="chip red">Atrasada</span>', hoje: '<span class="chip amber">Vence hoje</span>', aberto: '<span class="chip blue">A vencer</span>', pago: '<span class="chip green">Paga</span>' })[s] || '';
+      const semanas = [[1, 7, '1–7'], [8, 14, '8–14'], [15, 21, '15–21'], [22, 31, '22+']];
+      const bk = semanas.map(([a, b]) => L.round2(r.itensGastos.filter((i) => { const d = +i.venc.slice(8, 10); return d >= a && d <= b; }).reduce((s2, i) => s2 + i.valor, 0)));
+      const maxB = Math.max(1, ...bk);
+      const ult = r.itensGastos.slice().sort((x, y) => (y.c.criadoEm || 0) - (x.c.criadoEm || 0)).slice(0, 5);
+      html += `<div class="hero"><div class="hero-top"><small>Saldo atual</small><small>${MESES[mm - 1]}</small></div>
+        <b>${brl(saldoAtual)}</b><span class="hero-sub">Projetado com cartão de crédito: ${brl(saldoProj)}</span></div>`;
+      if (r.estimados) html += `<div class="banner blue">ℹ️ <div>${r.estimados} lançamento(s) deste mês com <b>valor variável ainda não informado</b>. Toque neles para informar o valor real.</div></div>`;
+      html += `<div class="tiles">
+        <div class="tile green"><small>Receitas</small><b>${brl(r.receitas)}</b><span>${vsAnt(r.receitas, ant.receitas)}</span></div>
+        <div class="tile red"><small>Gastos</small><b>${brl(gastosTile)}</b><span class="brk">Pix ${brl(gp.pix)} · Débito ${brl(gp.debito)} · Contas ${brl(r.pago)}</span><span>${vsAnt(gastosTile, gastosTileAnt)}</span></div></div>`;
+      html += `<div class="card"><h2>Visão geral do mês</h2>
+        <div class="meter"><div><small>Gastos sobre receitas</small><b>${pctGastos}%</b></div><div class="progress"><i style="width:${pctGastos}%"></i></div></div>
+        <div class="meter"><div><small>Contas pagas</small><b>${r.qtdPagas} de ${r.qtd}</b></div><div class="progress"><i style="width:${pctContas}%"></i></div></div></div>`;
+      html += `<div class="card"><h2>Dívidas do mês</h2>${occs.length ? occs.map((o) => `<div class="drow"><div><b>${esc(o.d.nome)}</b><small>${fmtData(o.venc).slice(0, 5)}${o.d.tipo ? ' · ' + esc(o.d.tipo) : ''}</small></div><div class="dright"><b>${brl(o.total)}</b>${chip(o.status)}</div></div>`).join('') : '<p class="hint">Nenhuma dívida neste mês.</p>'}</div>`;
+      html += `<div class="card"><h2>Gastos por semana</h2><div class="wk">${bk.map((v, i) => `<div title="${brl(v)}"><i style="height:${Math.round((v / maxB) * 100)}%"></i><small>${semanas[i][2]}</small></div>`).join('')}</div></div>`;
+      html += `<div class="card"><h2>Últimas transações</h2>${ult.length ? ult.map((i) => `<div class="trx"><span class="ico">${ICO[i.c.forma] || ''}</span><div><b>${esc(i.c.tipo || 'Compra')}</b><small>${fmtData(i.c.data).slice(0, 5)} · ${L.FORMAS[i.c.forma]}${i.c.parcelas > 1 ? ` · parcela ${i.n}/${i.c.parcelas}` : ''}</small></div><b class="tv">${brl(i.valor)}</b></div>`).join('') : '<p class="hint">Nenhum gasto neste mês.</p>'}</div>`;
       return html;
     },
 
